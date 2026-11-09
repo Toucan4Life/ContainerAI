@@ -1,0 +1,11 @@
+[package]
+name = "container-engine"
+description = "Deterministic rules engine for the Container board game (10th Anniversary rules)."
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "container_engine"
+
+[dependencies]
