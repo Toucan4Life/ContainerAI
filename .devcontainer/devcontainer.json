@@ -1,0 +1,64 @@
+{
+	"name": "ContainerAI (Rust + PyTorch CUDA)",
+	"image": "mcr.microsoft.com/devcontainers/rust:2-1-trixie",
+	"features": {
+		"ghcr.io/devcontainers/features/python:1": {
+			"version": "3.12",
+			"installTools": true
+		},
+		"ghcr.io/devcontainers/features/node:1": {
+			"version": "lts"
+		}
+	},
+	// Requires the NVIDIA driver + NVIDIA Container Toolkit on the host.
+	// PyTorch wheels bundle the CUDA runtime, so no CUDA toolkit is needed here.
+	"runArgs": ["--gpus=all", "--shm-size=8g"],
+	"containerEnv": {
+		"NVIDIA_VISIBLE_DEVICES": "all",
+		"NVIDIA_DRIVER_CAPABILITIES": "compute,utility",
+		"CARGO_TARGET_DIR": "/home/vscode/.cargo-target"
+	},
+	"remoteEnv": {
+		"PATH": "${containerWorkspaceFolder}/.venv/bin:${containerEnv:PATH}",
+		"VIRTUAL_ENV": "${containerWorkspaceFolder}/.venv"
+	},
+	"mounts": [
+		{
+			"source": "containerai-cargo-registry-${devcontainerId}",
+			"target": "/usr/local/cargo/registry",
+			"type": "volume"
+		},
+		{
+			"source": "containerai-cargo-target-${devcontainerId}",
+			"target": "/home/vscode/.cargo-target",
+			"type": "volume"
+		},
+		{
+			"source": "containerai-pip-cache-${devcontainerId}",
+			"target": "/home/vscode/.cache/pip",
+			"type": "volume"
+		}
+	],
+	"onCreateCommand": "sudo chown -R vscode: /usr/local/cargo/registry /home/vscode/.cargo-target /home/vscode/.cache",
+	"postCreateCommand": "bash .devcontainer/post-create.sh",
+	"forwardPorts": [5173, 8000],
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"rust-lang.rust-analyzer",
+				"tamasfe.even-better-toml",
+				"vadimcn.vscode-lldb",
+				"ms-python.python",
+				"ms-python.vscode-pylance",
+				"charliermarsh.ruff",
+				"ms-toolsai.jupyter",
+				"dbaeumer.vscode-eslint",
+				"esbenp.prettier-vscode"
+			],
+			"settings": {
+				"python.defaultInterpreterPath": "${containerWorkspaceFolder}/.venv/bin/python",
+				"rust-analyzer.check.command": "clippy"
+			}
+		}
+	}
+}
