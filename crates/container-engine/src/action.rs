@@ -59,17 +59,10 @@ pub enum Action {
     Reprice(District),
     /// Put the next container of the hand into a lot (0 is the cheapest lot).
     Place(usize),
-    /// In a delivery auction: secretly put this much cash on the table. In a runoff it is added to the
-    /// bid already there.
+    /// In a delivery auction: secretly put this much cash on the table. It is the bidder's only bid
+    /// and cannot be revised; the bids are revealed together once every bidder has placed theirs. In a
+    /// runoff it is added to the bid already there.
     Bid(u32),
-    /// When bids may be revised, while laying out a bid: show the cash just put down as this many cash
-    /// cards.
-    BidCards(u32),
-    /// When bids may be revised, while laying out a bid: put this many $0 bluff cards with the cash cards.
-    BidBluffs(u8),
-    /// When bids may be revised, once every stack is down: leave your stack as it is. The stacks are
-    /// revealed when everyone who could still revise theirs has done so.
-    ReadyToReveal,
     /// After a delivery auction's bids are in: sell the cargo to this bidder, at their bid.
     Accept(PlayerId),
     /// After a delivery auction's bids are in: pay the winning bid to the Bank and keep the cargo.

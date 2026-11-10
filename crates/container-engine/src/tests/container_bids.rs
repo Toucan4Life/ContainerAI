@@ -756,17 +756,18 @@ fn a_beaten_bidder_gets_their_containers_back_and_prices_them_again() {
     assert_eq!(g.turn.actions_left, 1, "the outbid was one action");
     let p = &g.state.players[holder];
     assert_eq!((p.reserve_factory, p.reserve_harbor), (0, 0));
+    let mut factory = before.factory_lots;
+    factory[3] = counts(&[(Blue, 1)]);
+    let mut harbor = before.harbor_lots;
+    harbor[4] = counts(&[(Red, 1)]);
     assert_eq!(
-        p.factory_lots[3],
-        counts(&[(Blue, 1)]),
-        "not in lot 1, where it was"
+        p.factory_lots, factory,
+        "only the returned container moved, and not back to lot 1"
     );
-    assert_eq!(p.harbor_lots[4], counts(&[(Red, 1)]));
     assert_eq!(
-        p.factory_lots[0], before.factory_lots[0],
-        "the rest is untouched"
+        p.harbor_lots, harbor,
+        "the containers already on the board are not laid out again"
     );
-    assert_eq!(p.harbor_lots[3], before.harbor_lots[3]);
     assert_eq!(tile(&g).map(|a| a.holder), Some(challenger));
     assert_eq!(g.check_invariants(), Ok(()));
 }

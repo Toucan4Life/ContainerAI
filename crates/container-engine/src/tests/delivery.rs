@@ -1,9 +1,9 @@
 use super::{actions_while_playing, new_game, pass_turn, set_cash, set_ship};
 use crate::action::{Action, Building, District};
 use crate::color::{Color, ColorCounts};
-use crate::config::GameLength;
+use crate::config::{GameLength, MAX_PLAYERS};
 use crate::game::Game;
-use crate::phase::Phase;
+use crate::phase::{Bidding, Phase};
 use crate::rng::Rng;
 use crate::state::{PlayerId, ShipLocation};
 
@@ -230,6 +230,19 @@ fn a_bid_leaves_the_hand_and_stays_on_the_table() {
     assert_eq!(g.check_invariants(), Ok(()), "the bid is still in play");
 }
 
+#[test]
+fn a_bid_is_final_and_the_next_opponent_bids_at_once() {
+    let (mut g, _) = delivery_game(3, 10);
+    let o = arrive(&mut g);
+
+    g.apply(Action::Bid(5)).unwrap();
+
+    assert_eq!(g.current_player(), o[1]);
+    assert_eq!(choices(&g), (0..=10).map(Action::Bid).collect::<Vec<_>>());
+    assert_eq!(cash(&g, o[0]), 5, "the first bid cannot be taken back");
+    assert_eq!(g.check_invariants(), Ok(()));
+}
+
 // The winner
 
 #[test]
@@ -379,6 +392,18 @@ fn a_buyout_needs_the_cash_for_the_winning_bid() {
 }
 
 // Ties and the runoff
+
+#[test]
+fn a_tie_starts_a_runoff_that_begins_afresh() {
+    let (g, me, o) = at_decision(3, 10, &[5, 5]);
+
+    let mut tied = [false; MAX_PLAYERS];
+    tied[o[0]] = true;
+    tied[o[1]] = true;
+    assert_eq!(g.phase, Phase::Bid(Bidding::runoff(me, o[0], tied, 5)));
+    assert_eq!((cash(&g, o[0]), cash(&g, o[1])), (5, 5));
+    assert_eq!(g.check_invariants(), Ok(()));
+}
 
 #[test]
 fn a_tie_for_the_highest_bid_starts_a_runoff_between_the_tied_bidders_only() {
@@ -629,6 +654,53 @@ fn every_combination_of_bids_settles_as_the_rules_say_with_three_opponents() {
 fn every_combination_of_bids_settles_as_the_rules_say_with_four_opponents() {
     check_every_outcome(5, 1, 0);
     check_every_outcome(5, 1, 1);
+}
+
+// Invariants
+
+fn corrupt(g: &mut Game, edit: impl FnOnce(&mut Bidding)) {
+    let Phase::Bid(mut b) = g.phase else {
+        panic!("not in a delivery auction: {:?}", g.phase);
+    };
+    edit(&mut b);
+    g.phase = Phase::Bid(b);
+}
+
+fn flagged(g: &Game) -> String {
+    g.check_invariants()
+        .expect_err("the invariants should be broken")
+}
+
+#[test]
+fn the_invariants_flag_a_bidder_who_is_not_bidding() {
+    let (mut g, me) = delivery_game(3, 10);
+    arrive(&mut g);
+
+    corrupt(&mut g, |b| b.bidder = me);
+
+    assert!(flagged(&g).contains("not a contender"));
+}
+
+#[test]
+fn the_invariants_flag_cash_on_the_table_from_someone_who_is_not_bidding() {
+    let (mut g, me) = delivery_game(3, 10);
+    arrive(&mut g);
+
+    g.state.players[me].cash -= 3;
+    corrupt(&mut g, |b| b.bids[me] = 3);
+
+    assert!(flagged(&g).contains("not bidding"));
+}
+
+#[test]
+fn the_invariants_flag_less_on_the_table_than_the_round_began_with() {
+    let (mut g, _) = delivery_game(3, 10);
+    arrive(&mut g);
+    g.apply(Action::Bid(5)).unwrap();
+
+    corrupt(&mut g, |b| b.base = 6);
+
+    assert!(flagged(&g).contains("less than"));
 }
 
 // Whole games

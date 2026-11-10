@@ -1,7 +1,7 @@
 //! Bank loans, and the interest paid on them when a turn begins.
 
 use crate::game::Game;
-use crate::phase::{BidStep, Phase, Turn};
+use crate::phase::{Phase, Turn};
 use crate::state::PlayerId;
 
 /// Loans a player can owe at once.
@@ -21,7 +21,7 @@ impl Game {
         }
         match self.phase {
             Phase::Main | Phase::Decide(_) => self.turn.loans_requested < LOANS_PER_TURN,
-            Phase::Bid(bidding) => matches!(bidding.step, BidStep::Cash | BidStep::Review),
+            Phase::Bid(_) => true,
             _ => false,
         }
     }

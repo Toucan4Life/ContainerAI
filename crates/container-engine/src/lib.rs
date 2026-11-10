@@ -5,7 +5,6 @@ pub mod arrange;
 pub mod auction;
 pub mod bank;
 pub mod build;
-pub mod cards;
 pub mod color;
 pub mod config;
 pub mod delivery;

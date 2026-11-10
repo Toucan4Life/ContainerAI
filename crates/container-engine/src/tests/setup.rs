@@ -67,35 +67,6 @@ fn config_defaults_to_standard_length() {
 }
 
 #[test]
-fn bids_are_placed_once_unless_the_config_allows_revisions() {
-    for players in 3..=5 {
-        assert_eq!(GameConfig::new(players).max_bid_revisions, 0);
-    }
-}
-
-#[test]
-fn the_revision_limit_is_set_with_the_builder_and_nothing_else_changes() {
-    for revisions in [0, 1, 2, 3, u8::MAX] {
-        let cfg = GameConfig::new(5)
-            .with_length(GameLength::Short)
-            .with_seed(9)
-            .with_max_bid_revisions(revisions);
-        assert_eq!(cfg.max_bid_revisions, revisions);
-        assert_eq!(cfg.num_players, 5);
-        assert_eq!(cfg.length, GameLength::Short);
-        assert_eq!(cfg.seed, 9);
-    }
-}
-
-#[test]
-fn any_revision_limit_makes_a_valid_game() {
-    for revisions in [0, 1, 2, 3, u8::MAX] {
-        let game = Game::new(GameConfig::new(4).with_max_bid_revisions(revisions)).unwrap();
-        assert_eq!(game.config.max_bid_revisions, revisions);
-    }
-}
-
-#[test]
 fn every_player_starts_with_the_rulebook_setup() {
     for players in 3..=5 {
         let game = new_game(players, GameLength::Standard, 17);

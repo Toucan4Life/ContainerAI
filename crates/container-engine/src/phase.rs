@@ -136,35 +136,10 @@ pub struct Loading {
     pub optional: bool,
 }
 
-/// Where a bidder is in laying out a bid, when bids may be revised.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BidStep {
-    /// Choosing how much cash to put on the table.
-    Cash,
-    /// Choosing how many cash cards that cash lies on the table as.
-    Cards,
-    /// Choosing how many $0 bluff cards to put with them.
-    Bluffs,
-    /// Every stack is down and counted, and the bidders look them over.
-    Review,
-}
-
-/// The cards a bidder lays out for their bid: cash cards worth what they bid, and $0 bluff cards. Only
-/// how many cards there are in all is public, not how many of them are bluffs.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Stack {
-    pub cards: u32,
-    pub bluffs: u8,
-}
-
-impl Stack {
-    /// How many cards lie in the stack, bluffs included.
-    pub fn total(&self) -> u32 {
-        self.cards + u32::from(self.bluffs)
-    }
-}
-
-/// A delivery auction in which the opponents place hidden cash bids one after the other.
+/// A delivery auction, which is a simultaneous blind bid: every opponent places one hidden cash bid,
+/// which cannot be revised, and the bids are revealed together once the last one is in. So that every
+/// decision is one player's, the bidders decide one after the other, clockwise from the deliverer's
+/// left, with the bids already placed hidden from them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Bidding {
     pub deliverer: PlayerId,
@@ -177,16 +152,8 @@ pub struct Bidding {
     /// Cash each player has on the table. It left their hand and stays here until the auction is settled.
     pub bids: [u32; MAX_PLAYERS],
     /// The cash every contender had on the table when this round began: none at first, then the highest
-    /// bid in a runoff. The stacks of cards are laid out for the cash put on top of it.
+    /// bid in a runoff. Unlike the cash put on top of it, it is public.
     pub base: u32,
-    pub step: BidStep,
-    /// Every contender has laid out a stack, so how many cards each one has is public.
-    pub stacks_down: bool,
-    pub stacks: [Stack; MAX_PLAYERS],
-    /// Contenders who are content with the stacks as they lie. Any revision clears them all.
-    pub ready: [bool; MAX_PLAYERS],
-    /// How many times each contender has taken their stack back and laid out another this round.
-    pub revisions: [u8; MAX_PLAYERS],
 }
 
 impl Bidding {
@@ -199,11 +166,6 @@ impl Bidding {
             runoff: false,
             bids: [0; MAX_PLAYERS],
             base: 0,
-            step: BidStep::Cash,
-            stacks_down: false,
-            stacks: [Stack::default(); MAX_PLAYERS],
-            ready: [false; MAX_PLAYERS],
-            revisions: [0; MAX_PLAYERS],
         }
     }
 
@@ -226,11 +188,6 @@ impl Bidding {
             base: top,
             ..Self::opening(deliverer, bidder, tied)
         }
-    }
-
-    /// The cash in a contender's stack: what they put on the table this round, on top of `base`.
-    pub fn stack_amount(&self, seat: PlayerId) -> u32 {
-        self.bids[seat] - self.base
     }
 }
 

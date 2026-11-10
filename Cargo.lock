@@ -3,5 +3,12 @@
 version = 4
 
 [[package]]
+name = "container-bots"
+version = "0.1.0"
+dependencies = [
+ "container-engine",
+]
+
+[[package]]
 name = "container-engine"
 version = "0.1.0"

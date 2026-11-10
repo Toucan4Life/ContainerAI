@@ -3,15 +3,14 @@
 use std::collections::{BTreeSet, HashSet};
 
 use container_engine::action::{Action, ActionError, Building, District};
-use container_engine::cards::BLUFF_CARDS;
 use container_engine::color::{Color, ColorCounts};
 use container_engine::config::{GameConfig, GameLength, MAX_PLAYERS, MIN_PLAYERS};
 use container_engine::game::Game;
 use container_engine::loans::MAX_LOANS;
 use container_engine::observation::Observation;
-use container_engine::phase::{BidStep, Bidding, Phase};
+use container_engine::phase::Phase;
 use container_engine::rng::Rng;
-use container_engine::state::{AuctionKind, HARBOR_LOTS, PlayerState, ShipLocation};
+use container_engine::state::{AuctionKind, HARBOR_LOTS, ShipLocation};
 
 /// How a seat chooses: from what it can see and what it may do, and nothing else.
 type Policy = fn(&Observation, &[Action], &mut Rng) -> Action;
@@ -61,9 +60,6 @@ fn weight(obs: &Observation, action: Action) -> u32 {
         Action::Reprice(_) => 2,
         Action::Place(lot) => (6 - lot.min(5) as u32).pow(2),
         Action::Bid(amount) | Action::BidCash(amount) => cheap(amount),
-        Action::BidCards(cards) => cheap(cards),
-        Action::BidBluffs(bluffs) => 3 - u32::from(bluffs.min(2)),
-        Action::ReadyToReveal => 100,
         Action::Accept(_) => 8,
         Action::BuyOut => 2,
         Action::RequestLoan if broke => 6,
@@ -110,8 +106,7 @@ fn play(
     Playout { game, trace }
 }
 
-/// Every player count and game length, with `seeds` games of each. Bidders may revise their stacks of
-/// cards no times, once or twice, in turn over the player counts, the lengths and the seeds.
+/// Every player count and game length, with `seeds` games of each.
 fn configs(seeds: u64) -> Vec<GameConfig> {
     let lengths = [
         GameLength::Short,
@@ -120,15 +115,9 @@ fn configs(seeds: u64) -> Vec<GameConfig> {
     ];
     let mut all = Vec::new();
     for players in MIN_PLAYERS..=MAX_PLAYERS {
-        for (nth, length) in lengths.into_iter().enumerate() {
+        for length in lengths {
             for seed in 0..seeds {
-                let revisions = ((players + nth) as u64 + seed) % 3;
-                all.push(
-                    GameConfig::new(players)
-                        .with_length(length)
-                        .with_seed(seed)
-                        .with_max_bid_revisions(revisions as u8),
-                );
+                all.push(GameConfig::new(players).with_length(length).with_seed(seed));
             }
         }
     }
@@ -150,7 +139,6 @@ fn universe(max_amount: u32) -> Vec<Action> {
         Action::RequestLoan,
         Action::RepayLoan,
         Action::DoneBidding,
-        Action::ReadyToReveal,
         Action::Sail(ShipLocation::Ocean),
         Action::Sail(ShipLocation::Island),
         Action::Sail(ShipLocation::Bank),
@@ -188,30 +176,17 @@ fn universe(max_amount: u32) -> Vec<Action> {
     }
     all.extend(AuctionKind::ALL.map(Action::Outbid));
     for amount in (0..=max_amount + 2).chain([u32::MAX]) {
-        all.extend([
-            Action::Bid(amount),
-            Action::BidCash(amount),
-            Action::BidCards(amount),
-        ]);
-    }
-    for bluffs in (0..=BLUFF_CARDS + 2).chain([u8::MAX]) {
-        all.push(Action::BidBluffs(bluffs));
+        all.extend([Action::Bid(amount), Action::BidCash(amount)]);
     }
     all
 }
 
-/// The most a player could name in a bid: their cash, and the stack already on the table, which a
-/// revision takes back.
+/// The most a player could name in a bid: their cash.
 fn richest(game: &Game) -> u32 {
-    let on_the_table = |seat: usize| match game.phase {
-        Phase::Bid(bidding) if bidding.contenders[seat] => bidding.stack_amount(seat),
-        _ => 0,
-    };
     game.state
         .players()
         .iter()
-        .enumerate()
-        .map(|(seat, p)| p.cash + on_the_table(seat))
+        .map(|p| p.cash)
         .max()
         .expect("players")
 }
@@ -230,27 +205,6 @@ const GAMBLERS: [&[Policy]; 6] = [
     &[uniform, sensible, first],
     &[last, sensible, uniform, first],
 ];
-
-/// The one way a game can go nowhere: every player is broke, owes every loan there is and has no
-/// container left to sell, so only the idle moves remain. The Bank's money is won by bidding, and
-/// nobody has anything to bid.
-fn bankrupt(game: &Game) -> bool {
-    let nothing_to_sell = |p: &PlayerState| {
-        let lots = p.factory_lots.iter().chain(&p.harbor_lots);
-        [&p.holding, &p.ship, &p.scoring_area]
-            .into_iter()
-            .chain(lots)
-            .all(ColorCounts::is_empty)
-    };
-    game.state
-        .players()
-        .iter()
-        .all(|p| p.cash == 0 && p.loans == MAX_LOANS && nothing_to_sell(p))
-        && game
-            .legal_actions()
-            .iter()
-            .all(|a| matches!(a, Action::Sail(_) | Action::Reprice(_)))
-}
 
 #[test]
 fn the_legal_list_is_exactly_what_the_game_accepts() {
@@ -332,31 +286,30 @@ fn every_listed_action_applies_changes_the_game_and_leaves_a_way_on() {
 }
 
 #[test]
-fn sensible_players_bring_every_game_to_its_end_unless_they_all_go_bankrupt() {
+fn sensible_players_bring_every_game_to_its_end() {
     let games = configs(6);
     let mut bankrupted = 0;
     for &config in &games {
         let Playout { game, trace } = play(config, &[sensible], LIMIT, |_, _| {});
         let seed = (config.num_players, config.length, config.seed);
-        if !game.is_terminal() {
-            assert!(
-                bankrupt(&game),
-                "{seed:?} was still going after {} actions",
-                trace.len()
-            );
-            bankrupted += 1;
-            continue;
-        }
+        assert!(
+            game.is_terminal(),
+            "{seed:?} was still going after {} actions",
+            trace.len()
+        );
 
         let out_of: Vec<Color> = Color::ALL
             .into_iter()
             .filter(|&c| game.state.supply.containers[c] == 0)
             .collect();
-        assert!(
-            out_of.len() >= 2,
-            "{seed:?} ended with the supply out of {out_of:?}"
-        );
-
+        if out_of.len() < 2 {
+            // The only other way a game ends is a table that has gone bankrupt.
+            assert!(
+                game.is_deadlocked(),
+                "{seed:?} ended with the supply out of {out_of:?}"
+            );
+            bankrupted += 1;
+        }
         let results = game.results().expect("a finished game has results");
         assert_eq!(results.scores.len(), config.num_players);
         let best = results.scores.iter().map(|s| s.total).max().unwrap();
@@ -381,20 +334,19 @@ fn sensible_players_bring_every_game_to_its_end_unless_they_all_go_bankrupt() {
     // Gamblers do go bankrupt now and then, but a bot that keeps its economy going rarely does.
     assert!(
         bankrupted * 20 <= games.len(),
-        "{bankrupted} of {} games went nowhere",
+        "{bankrupted} of {} games ended in bankruptcy",
         games.len()
     );
 }
 
-/// The rules don't end a game in which everybody is broke, so whoever runs games has to cut them off.
-/// The engine has to stay consistent meanwhile, and offer nothing but the idle moves.
+/// The rules don't end a game in which everybody is broke, so the engine does: it can't go on.
 #[test]
-fn a_table_of_broke_players_has_nothing_left_to_do_for_good() {
+fn a_table_of_broke_players_ends_the_game_instead_of_getting_stuck() {
     let config = GameConfig::new(4)
         .with_length(GameLength::Short)
         .with_seed(3);
     let mut game = Game::new(config).expect("a valid configuration");
-    assert!(!bankrupt(&game));
+    assert!(!game.is_deadlocked());
     for p in game.state.players.iter_mut().take(config.num_players) {
         game.state.cash_burned += p.cash;
         p.cash = 0;
@@ -405,15 +357,20 @@ fn a_table_of_broke_players_has_nothing_left_to_do_for_good() {
         }
     }
     game.check_invariants().expect("a consistent game");
+    assert!(game.is_deadlocked());
     let mut rng = Rng::new(9);
-    for step in 0..500 {
-        assert!(bankrupt(&game), "after {step} actions, in {:?}", game.phase);
+    // Interest is forgiven for lack of anything to seize, and the first turn ends after two actions.
+    for _ in 0..2 {
         assert!(!game.is_terminal());
         let legal = game.legal_actions();
         game.apply(legal[rng.below(legal.len() as u32) as usize])
             .expect("a listed action");
         game.check_invariants().expect("a consistent game");
     }
+    assert!(game.is_terminal());
+    let results = game.results().expect("a finished game has results");
+    assert_eq!(results.scores.len(), config.num_players);
+    assert!(game.legal_actions().is_empty());
 }
 
 #[test]
@@ -510,78 +467,7 @@ fn a_clone_plays_on_from_where_it_was_taken_without_disturbing_the_original() {
     }
 }
 
-/// A delivery auction in which the bidders may revise their stacks must come out as if each of them
-/// had bid once and for all the amount they ended up with.
-#[test]
-fn revised_stacks_decide_like_plain_bids_of_the_same_amounts() {
-    struct Round {
-        /// The game as the round began, but with bids that cannot be revised.
-        twin: Game,
-        /// The auction as it stood before the last action of the round.
-        last: Bidding,
-        /// Borrowing and repaying while looking the stacks over cannot be replayed by the twin, whose
-        /// bidders have no such moment.
-        loans: bool,
-    }
-
-    let mut compared = 0;
-    let mut revised = 0;
-    let mut runoffs = 0;
-    let mut skipped = 0;
-    let tables: [&[Policy]; 3] = [&[uniform], &[sensible, uniform], &[uniform, first, last]];
-    for table in tables {
-        for config in configs(4).into_iter().filter(|c| c.max_bid_revisions > 0) {
-            let mut round: Option<Round> = None;
-            play(config, table, 3_000, |game, action| {
-                let ended = round
-                    .take_if(|r| !matches!(game.phase, Phase::Bid(b) if b.runoff == r.last.runoff));
-                if let Some(Round {
-                    mut twin,
-                    last,
-                    loans,
-                }) = ended
-                {
-                    if loans {
-                        skipped += 1;
-                    } else {
-                        while let Phase::Bid(b) = twin.phase
-                            && b.runoff == last.runoff
-                        {
-                            twin.apply(Action::Bid(last.stack_amount(b.bidder)))
-                                .expect("the twin can afford what the revised stack cost");
-                        }
-                        twin.config = game.config;
-                        assert_eq!(twin, *game, "{config:?}");
-                        compared += 1;
-                        revised += u32::from(last.revisions.iter().any(|&times| times > 0));
-                        runoffs += u32::from(last.runoff);
-                    }
-                }
-                if let Phase::Bid(bidding) = game.phase {
-                    let r = round.get_or_insert_with(|| {
-                        let mut twin = game.clone();
-                        twin.config = twin.config.with_max_bid_revisions(0);
-                        Round {
-                            twin,
-                            last: bidding,
-                            loans: false,
-                        }
-                    });
-                    r.last = bidding;
-                    r.loans |= matches!(action, Action::RequestLoan | Action::RepayLoan);
-                }
-            });
-        }
-    }
-    eprintln!(
-        "compared {compared} rounds ({revised} revised, {runoffs} runoffs), skipped {skipped}"
-    );
-    assert!(compared >= 100, "only {compared} rounds were compared");
-    assert!(revised >= 20, "only {revised} rounds were revised");
-    assert!(runoffs >= 5, "only {runoffs} runoffs were compared");
-}
-
-const DECISIONS: [&str; 13] = [
+const DECISIONS: [&str; 10] = [
     "the main decision",
     "which colors to produce",
     "buying",
@@ -592,23 +478,14 @@ const DECISIONS: [&str; 13] = [
     "seizing in a default",
     "dealing out the seized",
     "a Bank bid",
-    "laying out a bid as cards",
-    "adding bluff cards to a bid",
-    "looking the stacks over",
 ];
 
-const SITUATIONS: [&str; 11] = [
+const SITUATIONS: [&str; 5] = [
     "a runoff between tied bids",
     "tied bids to settle",
     "buying from a factory district",
     "buying from a harbor district",
     "the last turn",
-    "a stack with bluff cards on the table",
-    "a stack taken back for a revision",
-    "stacks looked over again after a revision",
-    "a bidder with no revision left",
-    "a runoff with the stacks on the table",
-    "a loan taken while looking the stacks over",
 ];
 
 /// Matches are exhaustive on purpose: a new decision has to be named here, and so has to be played
@@ -620,12 +497,7 @@ fn decision_name(phase: Phase) -> &'static str {
         Phase::Buy(_) => 2,
         Phase::Load(_) => 3,
         Phase::Arrange(_) => 4,
-        Phase::Bid(bidding) => match bidding.step {
-            BidStep::Cash => 5,
-            BidStep::Cards => 10,
-            BidStep::Bluffs => 11,
-            BidStep::Review => 12,
-        },
+        Phase::Bid(_) => 5,
         Phase::Decide(_) => 6,
         Phase::Seize(_) => 7,
         Phase::Distribute(_) => 8,
@@ -655,9 +527,6 @@ fn action_name(action: Action) -> &'static str {
         Action::Reprice(District::Harbor) => "reprice the harbor district",
         Action::Place(_) => "place a container",
         Action::Bid(_) => "bid in a delivery",
-        Action::BidCards(_) => "lay out a bid as cards",
-        Action::BidBluffs(_) => "add bluff cards to a bid",
-        Action::ReadyToReveal => "be content with the stacks on the table",
         Action::Accept(_) => "accept a bid",
         Action::BuyOut => "buy out",
         Action::RequestLoan => "request a loan",
@@ -687,7 +556,7 @@ fn action_name(action: Action) -> &'static str {
     }
 }
 
-fn situations(game: &Game, action: Action) -> Vec<&'static str> {
+fn situations(game: &Game) -> Vec<&'static str> {
     let mut found = Vec::new();
     match game.phase {
         Phase::Bid(bidding) if bidding.runoff => found.push(SITUATIONS[0]),
@@ -702,31 +571,6 @@ fn situations(game: &Game, action: Action) -> Vec<&'static str> {
     }
     if game.is_last_turn() {
         found.push(SITUATIONS[4]);
-    }
-    if let Phase::Bid(bidding) = game.phase {
-        let some_contender = |holds: &dyn Fn(usize) -> bool| {
-            (0..MAX_PLAYERS).any(|seat| bidding.contenders[seat] && holds(seat))
-        };
-        let reviewing = bidding.step == BidStep::Review;
-        let cap = game.config.max_bid_revisions;
-        if bidding.stacks_down && some_contender(&|seat| bidding.stacks[seat].bluffs > 0) {
-            found.push(SITUATIONS[5]);
-        }
-        if bidding.stacks_down && matches!(bidding.step, BidStep::Cards | BidStep::Bluffs) {
-            found.push(SITUATIONS[6]);
-        }
-        if reviewing && some_contender(&|seat| bidding.revisions[seat] > 0) {
-            found.push(SITUATIONS[7]);
-        }
-        if cap > 0 && some_contender(&|seat| bidding.revisions[seat] == cap) {
-            found.push(SITUATIONS[8]);
-        }
-        if bidding.runoff && reviewing {
-            found.push(SITUATIONS[9]);
-        }
-        if reviewing && action == Action::RequestLoan {
-            found.push(SITUATIONS[10]);
-        }
     }
     found
 }
@@ -744,7 +588,7 @@ fn the_playouts_come_across_every_action_decision_and_situation() {
             play(config, table, 5_000, |game, action| {
                 seen.insert(decision_name(game.phase));
                 seen.insert(action_name(action));
-                seen.extend(situations(game, action));
+                seen.extend(situations(game));
             });
         }
     }

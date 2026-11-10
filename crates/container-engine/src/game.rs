@@ -2,11 +2,10 @@
 
 use crate::action::{Action, ActionError, Building, District};
 use crate::auction::{MAX_CONTAINER_BID, max_active_auctions};
-use crate::cards::{BLUFF_CARDS, card_counts};
 use crate::color::{Color, ColorCounts, NUM_COLORS};
 use crate::config::{ConfigError, GameConfig};
 use crate::loans::MAX_LOANS;
-use crate::phase::{BidStep, Phase, Turn};
+use crate::phase::{Phase, Turn};
 use crate::rng::Rng;
 use crate::state::{
     Auction, AuctionKind, BANK_LOTS, BANK_START_CASH, Bid, HARBOR_LOTS, PlayerId, SHIP_CAPACITY,
@@ -91,22 +90,11 @@ impl Game {
                 actions.extend(Color::ALL.map(Action::Load));
                 actions.push(Action::DoneLoading);
             }
-            Phase::Bid(bidding) => match bidding.step {
-                BidStep::Cash | BidStep::Review => {
-                    if bidding.step == BidStep::Review {
-                        actions.push(Action::ReadyToReveal);
-                    }
-                    let seat = bidding.bidder;
-                    let spendable = self.state.players[seat].cash + bidding.stack_amount(seat);
-                    actions.extend((0..=spendable).map(Action::Bid));
-                    actions.push(Action::RequestLoan);
-                }
-                BidStep::Cards => {
-                    let amount = bidding.stack_amount(bidding.bidder);
-                    actions.extend(card_counts(amount).into_iter().map(Action::BidCards));
-                }
-                BidStep::Bluffs => actions.extend((0..=BLUFF_CARDS).map(Action::BidBluffs)),
-            },
+            Phase::Bid(bidding) => {
+                let cash = self.state.players[bidding.bidder].cash;
+                actions.extend((0..=cash).map(Action::Bid));
+                actions.push(Action::RequestLoan);
+            }
             Phase::Decide(_) => {
                 actions.extend((0..self.state.num_players).map(Action::Accept));
                 actions.extend([Action::BuyOut, Action::RequestLoan]);
@@ -164,11 +152,6 @@ impl Game {
             (Phase::Load(loading), Action::Load(color)) => self.can_load_color(&loading, color),
             (Phase::Load(loading), Action::DoneLoading) => loading.optional || loading.loaded > 0,
             (Phase::Bid(bidding), Action::Bid(amount)) => self.can_bid(&bidding, amount),
-            (Phase::Bid(bidding), Action::BidCards(cards)) => self.can_bid_cards(&bidding, cards),
-            (Phase::Bid(bidding), Action::BidBluffs(bluffs)) => {
-                bidding.step == BidStep::Bluffs && bluffs <= BLUFF_CARDS
-            }
-            (Phase::Bid(bidding), Action::ReadyToReveal) => bidding.step == BidStep::Review,
             (Phase::Decide(decision), Action::Accept(winner)) => {
                 winner < self.state.num_players && decision.tied[winner]
             }
@@ -222,9 +205,6 @@ impl Game {
             Action::Load(color) => self.load(color),
             Action::DoneLoading => self.finish_action(),
             Action::Bid(amount) => self.bid(amount),
-            Action::BidCards(cards) => self.bid_cards(cards),
-            Action::BidBluffs(bluffs) => self.bid_bluffs(bluffs),
-            Action::ReadyToReveal => self.ready_to_reveal(),
             Action::Accept(winner) => self.accept(winner),
             Action::BuyOut => self.buy_out(),
             Action::Reprice(district) => self.begin_arrange(district, ColorCounts::default()),
@@ -257,7 +237,7 @@ impl Game {
     }
 
     pub(crate) fn end_turn(&mut self) {
-        if self.is_last_turn() {
+        if self.is_last_turn() || self.is_deadlocked() {
             self.end_game();
             return;
         }

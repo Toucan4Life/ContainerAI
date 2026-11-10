@@ -32,11 +32,24 @@ The rules engine is the library crate `crates/container-engine` (10th Anniversar
 
 - `Game::new(GameConfig)`, `legal_actions()`, `apply(action)`, `observation(viewer)` and `results()` are the main entry points. The action model is a flat legal-action list.
 - `observation` hides what the viewer cannot know: other players' cash, scoring cards and face-down bids.
-- `GameConfig::with_max_bid_revisions(n)` enables bluff cards and bid revisions in delivery auctions. The default, 0, places each bid once, hidden.
-- A table where every player is broke at the loan cap can no longer progress, and the engine does not declare a stalemate. Trainers should cap steps or turns.
+- Delivery auctions are simultaneous blind bids: each opponent places one hidden bid, and the bids are revealed together. A bid cannot be revised.
+- A table where every player is broke at the loan cap with no containers ends the game, as nothing could progress.
 
 ```sh
 cargo test -p container-engine
+```
+
+## Opponents
+
+The crate `crates/container-bots` holds the computer opponents. An opponent implements `Opponent::choose(&Observation, &[Action]) -> Action`, so it only sees what its seat sees. `OPPONENTS` lists the ones the UI offers, and `create(id, seed)` builds one. A seed gives the same choices every time. Opponents trained with PyTorch are meant to be added to the same list.
+
+| Id | Name | Plays |
+|---|---|---|
+| `random` | Random | Any legal action, chosen at random. |
+| `simple` | Simple | The legal action with the highest fixed priority, and a random one among equals. It produces, loads the ship, delivers to the Island and buys cheap containers, and bids a quarter of its cash in delivery auctions. It takes a loan only at $0, repays one when it holds $25 or more, and never builds, calls the Bank or buys out. |
+
+```sh
+cargo test -p container-bots
 ```
 
 ## Rules decisions
@@ -62,12 +75,12 @@ The errata arrived after the owner's first two rounds of rulings, so it override
 | **Loading Bank containers.** While docked at the Bank, a Harbor Purchase action loads containers from the holding area onto the ship, for free. | `HarborPurchase` while docked at the Bank loads containers from the holding area onto the ship. It is free, costs one of the two actions, must load at least one container, and is limited by the room on the ship. The optional free load on arrival at the Bank stays. | **Reversed.** The owner had ruled that sailing to the Bank is barred while the holding area is empty (`sail_bank_empty`). Now that a docked ship can load, waiting at the Bank makes sense, so sailing to the Bank is always legal. |
 | **Bidding $0 in Bank auctions.** A new auction needs a bid of at least $1 or 1 container. | A container lot opens with at least $1 and a cash lot with at least 1 container. An outbid needs $1, or 1 container, more than the tile holds. | Confirms the ruling on opening bids. |
 | **Containers on a bid tile** can't be sold, repriced or seized in a default. They leave the tile only when the auction is won or an opponent outbids. | They leave the lots when they go on the tile, so they can't be bought, repriced or seized. A default with nothing else to seize is forgiven. Their reserve tokens still count against storage limits. | None. The developer notes say these rules are unchanged. |
-| **$0 bluff cards** only disguise how many cards a bid has. They have no other effect and can be removed. | Disguise only (see Bluff cards below). With `max_bid_revisions = 0`, the default, no cards are used at all. | Confirms the ruling to include them. |
+| **$0 bluff cards** only disguise how many cards a bid has. They have no other effect and can be removed. | Removed, together with the bid revisions they served. A bid is the cash alone, placed once and hidden until every bidder has bid. | The owner had ruled to include them, with optional bid revisions. A later ruling dropped both: a delivery bid is a simultaneous blind bid. |
 | **Delivery minimum bid**, added by the owner next to the errata: it is $0. | A bid is `0..=cash`. A player without cash can only bid $0. Bids of $0 all round are a tie and go to a runoff. A buyout at $0 costs nothing. | None. The rulebook states no minimum. |
 
-Two points go beyond the errata's text. A Harbor Purchase at the Bank must load at least one container, like every paid purchase action (an owner ruling), because a paid load of nothing would only duplicate the no-op Reprice. And reversing `sail_bank_empty` is a consequence drawn from the errata, not something the owner stated.
+Two points go beyond the errata's text, and the owner has confirmed both. A Harbor Purchase at the Bank must load at least one container, like every paid purchase action, because a paid load of nothing would only duplicate the no-op Reprice. And reversing `sail_bank_empty` is a consequence drawn from the errata, not something the owner stated first.
 
-Tests: `docked_at_the_bank_a_harbor_purchase_loads_the_holding_area_for_free`, `a_harbor_purchase_at_the_bank_needs_something_to_load_and_room_for_it`, `a_ship_docked_at_the_bank_loads_the_containers_of_an_auction_it_won` and `the_bank_can_be_reached_with_nothing_to_collect` (sail); `a_container_lot_auction_opens_with_a_bid_of_at_least_one_dollar` (auction); `a_cash_lot_auction_opens_with_a_bid_of_at_least_one_container`, `the_containers_on_the_tile_are_not_laid_out_again_by_repricing`, `the_containers_on_the_tile_cannot_be_bought` and `the_containers_on_the_tile_cannot_be_seized_so_a_default_with_nothing_else_is_forgiven` (container_bids); `without_revisions_a_bid_is_the_cash_alone` (bluff); `a_player_without_cash_can_only_bid_nothing`, `bids_of_nothing_all_round_are_a_tie` and `a_buyout_at_zero_costs_nothing` (delivery).
+Tests: `docked_at_the_bank_a_harbor_purchase_loads_the_holding_area_for_free`, `a_harbor_purchase_at_the_bank_needs_something_to_load_and_room_for_it`, `a_ship_docked_at_the_bank_loads_the_containers_of_an_auction_it_won` and `the_bank_can_be_reached_with_nothing_to_collect` (sail); `a_container_lot_auction_opens_with_a_bid_of_at_least_one_dollar` (auction); `a_cash_lot_auction_opens_with_a_bid_of_at_least_one_container`, `the_containers_on_the_tile_are_not_laid_out_again_by_repricing`, `the_containers_on_the_tile_cannot_be_bought` and `the_containers_on_the_tile_cannot_be_seized_so_a_default_with_nothing_else_is_forgiven` (container_bids); `a_bid_is_final_and_the_next_opponent_bids_at_once`, `a_player_without_cash_can_only_bid_nothing`, `bids_of_nothing_all_round_are_a_tie` and `a_buyout_at_zero_costs_nothing` (delivery).
 
 ### Decision log
 
@@ -83,7 +96,7 @@ Tests: `docked_at_the_bank_a_harbor_purchase_loads_the_holding_area_for_free`, `
 | All randomness is at setup, from a seeded xoshiro256** generator: the Bank's starting colors, the starting factories, the scoring cards and the first player. A seed replays the same game. | Assumption |
 | The first player is random, which is the rulebook's alternative to "the player who last captained a seagoing vessel". | Reading |
 | The secret simultaneous bids of a delivery auction are sequential hidden decisions, clockwise from the deliverer's left, revealed together. | Assumption |
-| Cash is an integer, change is free and the supply never runs out. The card counts the owner supplied (36, 34, 26, 20 and 25 cards of $1, $2, $5, $10 and $20) are not enforced. The denominations only decide how a bid can be shown as cards. | Reading, Ruling |
+| Cash is an integer, change is free and the supply never runs out. The card counts the owner supplied (36, 34, 26, 20 and 25 cards of $1, $2, $5, $10 and $20) are not enforced. | Reading, Ruling |
 | The player "on your right" is the seat that plays just before you, since turns go clockwise. | Reading |
 
 #### Turn
@@ -109,7 +122,7 @@ Tests: `docked_at_the_bank_a_harbor_purchase_loads_the_holding_area_for_free`, `
 | Decision | Source |
 |---|---|
 | Sailing to the Island with an empty ship is forbidden. The rulebook doesn't rule against it, but it is meaningless. | Ruling |
-| Sailing to the Bank from the ocean is always legal, even with nothing in the holding area. | Errata, as a consequence |
+| Sailing to the Bank from the ocean is always legal, even with nothing in the holding area. | Errata, as a consequence; Ruling (confirmed) |
 | Sailing to an opponent's harbor is legal even if nothing there can be bought. | Assumption |
 | The free anchor action at a harbor or the Bank is optional, and is skipped by itself when nothing could be bought or loaded. | Reading |
 
@@ -117,27 +130,17 @@ Tests: `docked_at_the_bank_a_harbor_purchase_loads_the_holding_area_for_free`, `
 
 | Decision | Source |
 |---|---|
+| A delivery auction is a simultaneous blind bid: each opponent places one hidden bid, and the bids are revealed together once the last one is in. A bid can't be revised, and there are no cards to lay out: a bid is the cash alone. | Ruling |
 | Opponents bid from $0 up to the cash they hold. A bid leaves the hand when it goes on the table, so it can't be spent on anything else, but a bidder may take a loan first. | Ruling, Assumption |
 | Bids of $0 all round are a tie. | Assumption, announced |
 | A tie gets one runoff. Each tied bidder adds cash on top of their first bid, which stays on the table, and the other bidders sit out. A tie after the runoff goes to the deliverer's choice. | Rulebook |
 | The deliverer decides after the reveal even when there is no tie: accept a bidder, or buy out. Accepting pays the bid plus an equal subsidy from the supply and refunds the other tied bids. A buyout pays the bid into the Bank's cash lots, keeps the cargo, refunds all tied bids, and needs the cash. | Rulebook |
 
-#### Bluff cards and bid revisions
-
-| Decision | Source |
-|---|---|
-| Bluff cards are pure disguise: 2 per player, with no other effect. They come back to the hand after each reveal and can be reused, in a runoff too. | Errata, Rulebook |
-| Revisions are off by default (`max_bid_revisions = 0`): every bid is placed once, hidden, then revealed, and no cards are used. The owner plans 2 for human play. | Ruling |
-| With a cap above 0 a bid is laid out as a stack: the cash amount, how many cash cards it is shown as (any number the denominations allow, so $5 can be 1, 3, 4 or 5 cards but never 2), and 0 to 2 bluff cards. Only the number of cards in each stack is public, once every stack is down. | Ruling, Assumption |
-| Once every stack is down, the bidders look the stacks over in turn, starting with the first bidder. Each may be content, revise (take the stack back and lay out another, while revisions are left) or take a loan. A revision clears everyone's "content" mark, so everybody looks again. When nobody wants to, or can, revise any more, the stacks are revealed together. | Ruling, Assumption |
-| A revision may spend the cash of the stack it replaces. | Assumption |
-| A runoff follows the same protocol. Only the added stack is laid out, each bidder's revisions are counted afresh, and the first bid stays on the table. | Assumption |
-
 #### Loans, interest and default
 
 | Decision | Source |
 |---|---|
-| Loans are free actions. They are offered at a player's own decision points: between their actions, when the deliverer decides, and to each bidder while laying out cash or looking at the stacks. They are not offered in the middle of a purchase, load, arrangement or Bank bid, as a loan taken earlier gives the same result because costs are known beforehand. | Assumption |
+| Loans are free actions. They are offered at a player's own decision points: between their actions, when the deliverer decides, and to each bidder before they bid. They are not offered in the middle of a purchase, load, arrangement or Bank bid, as a loan taken earlier gives the same result because costs are known beforehand. | Assumption |
 | A player may request at most 2 loans and repay at most 2 in one of their own turns, which stops repay-and-borrow loops. | Ruling |
 | Repaying is only possible on the player's own turn, between actions, after interest. | Rulebook |
 | Interest is due on the loans held when the turn begins. A player who is short and holds fewer than 2 loans takes a loan to pay it, and that loan does not count as a request. | Reading |
@@ -153,9 +156,9 @@ Tests: `docked_at_the_bank_a_harbor_purchase_loads_the_holding_area_for_free`, `
 | Call Bank is once per turn, and not in a turn in which an auction was won or the game was ended. | Rulebook |
 | An auction can only start on a lot that holds something. A holder can't outbid themselves. | Ruling, Reading |
 | A container lot is bid for with cash, face up on the cash tile, and that cash can't be spent, even on interest. The opening bid is at least $1 and an outbid at least $1 more. | Rulebook, Errata |
-| A cash lot is bid for with containers from the factory and harbor districts, and only their number matters. The opening bid is at least 1 container and an outbid at least 1 more. Reserve tokens mark where they came from and count against storage limits. A bid holds at most 10 containers, as the box has 10 reserve tokens. | Rulebook, Errata, Assumption (the cap, announced) |
-| Containers are picked for a bid in a fixed order: the factory district first, then lot by lot and color by color. | Assumption |
-| An outbid holder gets the cash or containers back. Only the returned containers are laid out again, in any lots of the district they came from, and the holder decides where. | Assumption, announced |
+| A cash lot is bid for with containers from the factory and harbor districts, and only their number matters. The opening bid is at least 1 container and an outbid at least 1 more. Reserve tokens mark where they came from and count against storage limits. A bid holds at most 10 containers, as the box has 10 reserve tokens. | Rulebook, Errata, Ruling (the cap, confirmed) |
+| A cash-lot bid is declared one container at a time, in one fixed order: the factory district first, then lot by lot and color by color. This only fixes the order in which the containers are named, so that every set of containers has exactly one action sequence. Any container in the factory and harbor districts can be bid. | Assumption |
+| An outbid holder gets the cash or containers back. Only the returned containers are laid out again, in any lots of the district they came from, and the holder decides where. The containers that were already on their board stay in their lots and are not priced again. | Ruling |
 | The holder wins at the start of their next turn, after interest. A won container lot goes to the holding area and a won cash lot to the hand. The winner pays into the other kind of lots, and chooses which colors go where. | Rulebook |
 
 #### Game end
@@ -164,7 +167,7 @@ Tests: `docked_at_the_bank_a_harbor_purchase_loads_the_holding_area_for_free`, `
 |---|---|
 | The game ends when the supply is out of 2 colors. Only Produce lowers the supply, so the check comes right after Produce. The active player finishes their turn, so a second action is still taken, and no further interest is paid. | Rulebook |
 | No Call Bank in the turn that ends the game, in either order. Once a Produce has emptied the second color, Call Bank is barred. A Produce that would end the game is illegal if the Bank was already called this turn, so colors that would end the game can't be chosen then. | Ruling |
-| Winning an auction at the start of a turn doesn't stop the game ending that turn by Produce. The ban is on Call Bank, which a won auction doesn't involve. | Reading |
+| Winning an auction at the start of a turn doesn't stop the game ending that turn by Produce. The ban is on Call Bank, which a won auction doesn't involve. | Reading, Ruling (confirmed) |
 | Active auctions go to the highest bidder when the game ends. Won containers go to the holding area, worth $3 each. A cash-lot winner's containers go to the Bank with no choice, as they no longer score. | Rulebook, Assumption |
 
 #### Final scoring
@@ -180,18 +183,10 @@ Tests: `docked_at_the_bank_a_harbor_purchase_loads_the_holding_area_for_free`, `
 | Decision | Source |
 |---|---|
 | An observation hides other players' cash and scoring cards until the game is over, and hides face-down bids. A hand's card count is not tracked, so cash stays fully hidden. | Assumption, announced |
-| With bluff cards, only the number of cards in each stack is public. The viewer sees the split of their own stack. | Errata, Assumption |
 | The seed and the list of legal actions are not part of an observation. | Assumption |
 
-#### Known limit
+#### Deadlock
 
 | Decision | Source |
 |---|---|
-| A table where every player is broke at the loan cap with no containers can't progress. The rulebook has no rule for it and the engine does not declare a stalemate. About 0.17% of the playouts with a sensible policy reach this state, so trainers should cap steps or turns. | Assumption |
-
-### Points to confirm
-
-1. Sailing to the Bank is always legal. It follows from the errata and replaces the owner's `sail_bank_empty` ruling, but the owner has not confirmed that consequence.
-2. A Harbor Purchase at the Bank must load at least one container.
-3. A turn that wins a Bank auction may still end the game by Produce.
-4. A cash-lot bid holds at most 10 containers, and after an outbid only the returned containers are laid out again. Both were announced and never explicitly confirmed.
+| A table where every player has $0, owes every loan there is and has no container, with no Bank auction running and only idle moves (sailing and repricing) left for every seat, ends the game when a turn ends. The rulebook has no rule for it, and the game would otherwise be stuck. The players are scored as in any other ending. About 0.17% of the playouts with a sensible policy reach this state. | Ruling |

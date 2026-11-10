@@ -20,10 +20,6 @@ pub struct GameConfig {
     pub num_players: usize,
     pub length: GameLength,
     pub seed: u64,
-    /// How many times each bidder of a delivery auction may swap their bid for another after the
-    /// cards are down and before they are turned over. With none (the default) every bid is placed
-    /// once, hidden, and turned over; the cards of a bid are then never part of the game.
-    pub max_bid_revisions: u8,
 }
 
 impl GameConfig {
@@ -32,7 +28,6 @@ impl GameConfig {
             num_players,
             length: GameLength::Standard,
             seed: 0,
-            max_bid_revisions: 0,
         }
     }
 
@@ -43,11 +38,6 @@ impl GameConfig {
 
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.seed = seed;
-        self
-    }
-
-    pub fn with_max_bid_revisions(mut self, revisions: u8) -> Self {
-        self.max_bid_revisions = revisions;
         self
     }
 
