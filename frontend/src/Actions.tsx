@@ -2,6 +2,7 @@ import { ReactNode, useState } from "react";
 import {
   Anchor,
   ArrowRight,
+  ChevronDown,
   Coins,
   Factory,
   Gavel,
@@ -11,6 +12,7 @@ import {
   Package,
   Shuffle,
   Ship,
+  Undo2,
   Warehouse,
 } from "lucide-react";
 import {
@@ -23,6 +25,8 @@ import {
   Snapshot,
   lotPrice,
   factoryCost,
+  FACTORY_LOTS,
+  HARBOR_LOTS,
   warehouseCost,
   total,
 } from "./engine";
@@ -159,8 +163,26 @@ function LoanButtons({ snap, act }: Props) {
   );
 }
 
-export default function ActionPanel({ snap, act }: Props) {
+export default function ActionPanel({ snap, act, undo, stepBack }: Props & { undo: () => void; stepBack: () => void }) {
   if (snap.legal.length === 0) return <Waiting snap={snap} />;
+  const midAction = snap.phase.type !== "Main";
+  return (
+    <>
+      <PhasePanel snap={snap} act={act} stepBack={stepBack} />
+      {snap.canUndo && snap.phase.type !== "GameOver" && (
+        <button
+          className="undo-button"
+          onClick={undo}
+          title={midAction ? "Go back to the start of this action" : "Take back your last action this turn"}
+        >
+          <Undo2 size={14} /> {midAction ? "Cancel this action" : "Undo last action"}
+        </button>
+      )}
+    </>
+  );
+}
+
+function PhasePanel({ snap, act, stepBack }: Props & { stepBack: () => void }) {
   const phase = snap.phase;
   switch (phase.type) {
     case "Main":
@@ -172,7 +194,7 @@ export default function ActionPanel({ snap, act }: Props) {
     case "Load":
       return <LoadPanel snap={snap} act={act} />;
     case "Arrange":
-      return <ArrangePanel snap={snap} act={act} phase={phase} />;
+      return <ArrangePanel snap={snap} act={act} phase={phase} stepBack={stepBack} />;
     case "Bid":
       return <BidPanel key={`${phase.bidder}-${phase.runoff}`} snap={snap} act={act} phase={phase} />;
     case "Decide":
@@ -258,6 +280,7 @@ function MainPanel({ snap, act }: Props) {
     }
   };
 
+  const harborInBuy = harbor && me.ship.at !== "bank" ? harbor : undefined;
   const harborLabel =
     me.ship.at === "bank"
       ? { label: "Load from holding area", sub: "Free: move Bank winnings onto the ship" }
@@ -267,6 +290,171 @@ function MainPanel({ snap, act }: Props) {
         };
 
   const auctionOf = (kind: "container" | "cash") => snap.bank.auctions.find((a) => a.kind === kind);
+
+  const [open, setOpen] = useState<string | null>(null);
+  const choose = (run: () => void) => {
+    setOpen(null);
+    run();
+  };
+  const pick = (id: number) => () => choose(() => act(id));
+  const sub = (title: string, buttons: ReactNode) => (
+    <div className="menu-sub">
+      <div className="menu-sub-title">{title}</div>
+      <div className="action-buttons">{buttons}</div>
+    </div>
+  );
+  const bankAction = (a: Of<"StartAuction">) => (
+    <ActButton
+      compact
+      key={a.id}
+      icon={<Gavel size={15} />}
+      label={a.kind === "container" ? (
+        <span className="lot-label">Lot {LOT_NUMERALS[a.lot]} <Chips counts={snap.bank.containerLots[a.lot]} /></span>
+      ) : `Lot ${LOT_NUMERALS[a.lot]} · ${money(snap.bank.cashLots[a.lot])}`}
+      sub={a.kind === "container" ? `Bid cash for container lot ${LOT_NUMERALS[a.lot]}` : `Bid containers for the ${money(snap.bank.cashLots[a.lot])} cash lot`}
+      onClick={pick(a.id)}
+    />
+  );
+  const tabs = [
+    {
+      key: "buy",
+      label: "Buy",
+      icon: <Coins size={15} />,
+      count: purchases.length + (harborInBuy ? 1 : 0),
+      blocked: buyBlockedReason(snap),
+      options: (
+        <div className="action-buttons">
+          {harborInBuy && (
+            <ActButton
+              compact
+              icon={<Anchor size={15} />}
+              label={me.ship.at === "harbor" ? `${name(me.ship.owner)}'s harbor` : "Harbor"}
+              sub={me.ship.at === "harbor" ? `Buy at ${name(me.ship.owner)}'s harbor onto your ship` : "Buy containers onto your ship"}
+              onClick={pick(harborInBuy.id)}
+            />
+          )}
+          {purchases.map((a) => (
+            <ActButton
+              compact
+              key={a.id}
+              icon={<Coins size={15} />}
+              label={a.seller === snap.viewer ? "Mine" : name(a.seller)}
+              sub={a.seller === snap.viewer ? "Your own factories" : `${name(a.seller)}'s factory district`}
+              onClick={pick(a.id)}
+            />
+          ))}
+        </div>
+      ),
+    },
+    {
+      key: "sail",
+      label: "Sail",
+      icon: <Ship size={15} />,
+      count: sails.length,
+      blocked: "Your ship cannot sail now",
+      options: (
+        <div className="action-buttons">
+          {sails.map((a) => {
+            const { label, sub } = sailLabel(a.to);
+            const short = a.to.at === "harbor" ? `${name(a.to.owner)}'s harbor` : a.to.at === "island" ? "Island" : a.to.at === "bank" ? "Bank" : "Open sea";
+            return (
+              <ActButton compact key={a.id} icon={<Ship size={15} />} label={short} sub={`${label}: ${sub}`} primary={a.to.at === "island"} onClick={pick(a.id)} />
+            );
+          })}
+        </div>
+      ),
+    },
+    {
+      key: "build",
+      label: "Build",
+      icon: <Factory size={15} />,
+      count: factories.length + (warehouse ? 1 : 0),
+      blocked: "Nothing to build",
+      options: (
+        <>
+          {factories.length > 0 &&
+            sub(
+              `Factory · ${money(factoryCost(ownedFactories))}`,
+              factories.map((a) => (
+                <ActButton
+                  compact
+                  key={a.id}
+                  icon={<Swatch color={a.color} size={14} />}
+                  label={COLOR_LABELS[a.color]}
+                  sub={`${COLOR_LABELS[a.color]} factory. Costs ${money(factoryCost(ownedFactories))}, adds 2 storage`}
+                  onClick={pick(a.id)}
+                />
+              )),
+            )}
+          {warehouse &&
+            sub(
+              "Warehouse",
+              <ActButton
+                compact
+                icon={<Warehouse size={15} />}
+                label={money(warehouseCost(me.warehouses))}
+                sub={`Warehouse. Costs ${money(warehouseCost(me.warehouses))}, adds harbor storage`}
+                onClick={pick(warehouse.id)}
+              />,
+            )}
+        </>
+      ),
+    },
+    {
+      key: "bank",
+      label: "Call bank",
+      icon: <Gavel size={15} />,
+      count: starts.length + outbids.length,
+      blocked: "No Bank lot to bid on",
+      options: (
+        <>
+          {outbids.length > 0 &&
+            sub(
+              "Outbid",
+              outbids.map((a) => {
+                const live = auctionOf(a.kind);
+                return (
+                  <ActButton
+                    compact
+                    key={a.id}
+                    icon={<Gavel size={15} />}
+                    label={a.kind === "container" ? "Container lot" : "Cash lot"}
+                    sub={live ? `${name(live.holder)} holds lot ${LOT_NUMERALS[live.lot]}` : undefined}
+                    onClick={pick(a.id)}
+                  />
+                );
+              }),
+            )}
+          {starts.some((a) => a.kind === "container") &&
+            sub("Container lots · bid cash", starts.filter((a) => a.kind === "container").map(bankAction))}
+          {starts.some((a) => a.kind === "cash") &&
+            sub("Cash lots · bid containers", starts.filter((a) => a.kind === "cash").map(bankAction))}
+        </>
+      ),
+    },
+    {
+      key: "reprice",
+      label: "Reprice",
+      icon: <Shuffle size={15} />,
+      count: reprices.length,
+      blocked: "Nothing to reprice",
+      options: (
+        <div className="action-buttons">
+          {reprices.map((a) => (
+            <ActButton
+              compact
+              key={a.id}
+              icon={<Shuffle size={15} />}
+              label={a.district === "factory" ? "Factory" : "Harbor"}
+              sub={`Lay out the ${a.district} district again`}
+              onClick={pick(a.id)}
+            />
+          ))}
+        </div>
+      ),
+    },
+  ];
+  const openTab = tabs.find((t) => t.key === open);
 
   return (
     <Shell
@@ -284,136 +472,35 @@ function MainPanel({ snap, act }: Props) {
       }
     >
       <div className="action-groups">
-        <Group title="Main">
+        <div className="menu-tabs">
           {produce ? (
-            <ActButton
-              compact
-              primary
-              icon={<Package size={15} />}
-              label="Produce"
-              sub="Pay $1 wages, take containers from your factories"
-              onClick={() => act(produce.id)}
-            />
+            <ActButton compact primary icon={<Package size={15} />} label="Produce" sub="Pay $1 wages, take containers from your factories" onClick={() => choose(() => act(produce.id))} />
           ) : (
-            <ActButton
-              compact
-              disabled
-              icon={<Package size={15} />}
-              label="Produce"
-              sub={snap.turn.produced ? "Already produced this turn" : "No room or nothing to produce"}
-            />
+            <ActButton compact disabled icon={<Package size={15} />} label="Produce" sub={snap.turn.produced ? "Already produced this turn" : "No room or nothing to produce"} />
           )}
-          {purchases.map((a) => (
-            <ActButton
-              compact
-              key={a.id}
-              icon={<Coins size={15} />}
-              label={a.seller === snap.viewer ? "Buy: mine" : `Buy: ${name(a.seller)}`}
-              sub={a.seller === snap.viewer ? "Your own factories" : `${name(a.seller)}'s factory district`}
-              onClick={() => act(a.id)}
-            />
+          {harbor && !harborInBuy && (
+            <ActButton compact icon={<Anchor size={15} />} label={harborLabel.label} sub={harborLabel.sub} onClick={() => choose(() => act(harbor.id))} />
+          )}
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              className={`action-button action-compact menu-tab ${open === t.key ? "menu-tab-open" : ""}`}
+              disabled={t.count === 0}
+              title={t.count === 0 ? t.blocked : undefined}
+              onClick={() => setOpen(open === t.key ? null : t.key)}
+            >
+              {t.icon}
+              <span><strong>{t.label}</strong></span>
+              {t.count > 0 && <ChevronDown size={13} className="menu-chevron" />}
+            </button>
           ))}
-          {purchases.length === 0 && (
-            <ActButton compact disabled icon={<Coins size={15} />} label="Buy" sub={buyBlockedReason(snap)} />
-          )}
-          {harbor && (
-            <ActButton
-              compact
-              icon={<Anchor size={15} />}
-              label={harborLabel.label}
-              sub={harborLabel.sub}
-              onClick={() => act(harbor.id)}
-            />
-          )}
-        </Group>
-
-        {sails.length > 0 && (
-          <Group title="Sail">
-            {sails.map((a) => {
-              const { label, sub } = sailLabel(a.to);
-              return (
-                <ActButton
-                  compact
-                  key={a.id}
-                  icon={<Ship size={15} />}
-                  label={label}
-                  sub={sub}
-                  primary={a.to.at === "island"}
-                  onClick={() => act(a.id)}
-                />
-              );
-            })}
-          </Group>
+        </div>
+        {openTab && openTab.count > 0 && (
+          <div className="menu-options">
+            <div className="group-title">{openTab.label}</div>
+            {openTab.options}
+          </div>
         )}
-
-        <Fold title="Build" count={factories.length + (warehouse ? 1 : 0)}>
-          {factories.map((a) => (
-            <ActButton
-              compact
-              key={a.id}
-              icon={<Factory size={15} />}
-              label={
-                <>
-                  <Swatch color={a.color} /> {COLOR_LABELS[a.color]} factory · {money(factoryCost(ownedFactories))}
-                </>
-              }
-              sub={`Costs ${money(factoryCost(ownedFactories))}. Adds 2 storage`}
-              onClick={() => act(a.id)}
-            />
-          ))}
-          {warehouse && (
-            <ActButton
-              compact
-              icon={<Warehouse size={15} />}
-              label={`Warehouse · ${money(warehouseCost(me.warehouses))}`}
-              sub={`Costs ${money(warehouseCost(me.warehouses))}. Adds harbor storage`}
-              onClick={() => act(warehouse.id)}
-            />
-          )}
-        </Fold>
-
-        <Fold title="Bank" count={starts.length + outbids.length}>
-          {outbids.map((a) => {
-            const live = auctionOf(a.kind);
-            return (
-              <ActButton
-                compact
-                key={a.id}
-                icon={<Gavel size={15} />}
-                label={`Outbid ${a.kind}`}
-                sub={live ? `${name(live.holder)} holds lot ${LOT_NUMERALS[live.lot]}` : undefined}
-                onClick={() => act(a.id)}
-              />
-            );
-          })}
-          {starts.map((a) => (
-            <ActButton
-              compact
-              key={a.id}
-              icon={<Gavel size={15} />}
-              label={a.kind === "container" ? `Cash → lot ${LOT_NUMERALS[a.lot]}` : `Boxes → ${money(snap.bank.cashLots[a.lot])}`}
-              sub={
-                a.kind === "container"
-                  ? `Bid cash for container lot ${LOT_NUMERALS[a.lot]}`
-                  : `Bid containers for cash lot ${LOT_NUMERALS[a.lot]} (${money(snap.bank.cashLots[a.lot])})`
-              }
-              onClick={() => act(a.id)}
-            />
-          ))}
-        </Fold>
-
-        <Fold title="Reprice" count={reprices.length}>
-          {reprices.map((a) => (
-            <ActButton
-              compact
-              key={a.id}
-              icon={<Shuffle size={15} />}
-              label={`${a.district} district`}
-              sub="Lay the containers out again"
-              onClick={() => act(a.id)}
-            />
-          ))}
-        </Fold>
 
         <LoanButtons snap={snap} act={act} />
       </div>
@@ -507,7 +594,7 @@ function LoadPanel({ snap, act }: Props) {
   );
 }
 
-function ArrangePanel({ snap, act, phase }: Props & { phase: Extract<Phase, { type: "Arrange" }> }) {
+function ArrangePanel({ snap, act, phase, stepBack }: Props & { stepBack: () => void; phase: Extract<Phase, { type: "Arrange" }> }) {
   const next = phase.hand.findIndex((n) => n > 0);
   const places = of(snap, "Place");
   return (
@@ -525,18 +612,32 @@ function ArrangePanel({ snap, act, phase }: Props & { phase: Extract<Phase, { ty
         <Chips counts={phase.hand} />
       </div>
       <div className="lot-picker">
-        {places.map((a) => (
-          <button
-            key={a.id}
-            className="lot-choice"
-            title={`${phase.district === "factory" ? "Factory" : "Harbor"} district, ${money(lotPrice(phase.district, a.lot))} lot`}
-            onClick={() => act(a.id)}
-          >
-            {next >= 0 && <Swatch color={next} size={12} />}
-            <strong>{money(lotPrice(phase.district, a.lot))}</strong>
-          </button>
-        ))}
+        {Array.from({ length: phase.district === "factory" ? FACTORY_LOTS : HARBOR_LOTS }, (_, lot) => {
+          const a = places.find((p) => p.lot === lot);
+          const price = money(lotPrice(phase.district, lot));
+          return (
+            <button
+              key={lot}
+              className="lot-choice"
+              disabled={!a}
+              title={
+                a
+                  ? `${phase.district === "factory" ? "Factory" : "Harbor"} district, ${price} lot`
+                  : `A ${COLOR_LABELS[next].toLowerCase()} container must go in a lot at or above the one used by your previous ${COLOR_LABELS[next].toLowerCase()} container`
+              }
+              onClick={a ? () => act(a.id) : undefined}
+            >
+              {next >= 0 && <Swatch color={next} size={12} />}
+              <strong>{price}</strong>
+            </button>
+          );
+        })}
       </div>
+      {snap.canStepBack && (
+        <button className="undo-button" onClick={stepBack}>
+          <Undo2 size={14} /> Undo last placement
+        </button>
+      )}
     </Shell>
   );
 }

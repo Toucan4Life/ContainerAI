@@ -47,6 +47,24 @@ export function useGame() {
     [refresh],
   );
 
+  const undo = useCallback(() => {
+    try {
+      client.current?.undo();
+      refresh();
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [refresh]);
+
+  const stepBack = useCallback(() => {
+    try {
+      client.current?.stepBack();
+      refresh();
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [refresh]);
+
   const botTurn =
     snap !== null && !snap.gameOver && snap.seats[snap.currentPlayer].kind !== "human";
 
@@ -63,5 +81,5 @@ export function useGame() {
     return () => clearTimeout(timer);
   }, [botTurn, snap, speed, refresh]);
 
-  return { snap, act, start, leave, speed, setSpeed, error, dismissError: () => setError(null) };
+  return { snap, act, undo, stepBack, start, leave, speed, setSpeed, error, dismissError: () => setError(null) };
 }

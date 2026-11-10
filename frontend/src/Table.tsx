@@ -28,8 +28,10 @@ export default function Table({ snap, pick, act }: Common) {
         ))}
       </div>
       <div className="table-middle">
-        <IslandZone snap={snap} pick={pick} act={act} />
-        <OceanZone snap={snap} pick={pick} act={act} />
+        <div className="table-waters">
+          <IslandZone snap={snap} pick={pick} act={act} />
+          <OceanZone snap={snap} pick={pick} act={act} />
+        </div>
         <BankZone snap={snap} pick={pick} act={act} />
       </div>
       <Harbor snap={snap} seat={me} pick={pick} act={act} mine />

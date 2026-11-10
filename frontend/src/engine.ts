@@ -124,6 +124,8 @@ export type Snapshot = {
   currentPlayer: number;
   lastTurn: boolean;
   round: number;
+  canUndo: boolean;
+  canStepBack: boolean;
   gameOver: boolean;
   turn: {
     actionsLeft: number;
@@ -180,6 +182,14 @@ export class GameClient {
 
   act(id: number) {
     this.game.act(id);
+  }
+
+  stepBack() {
+    this.game.step_back();
+  }
+
+  undo() {
+    this.game.undo();
   }
 
   step(): boolean {

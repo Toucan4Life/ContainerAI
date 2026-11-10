@@ -25,13 +25,15 @@ function buildPick(snap: Snapshot): Pick {
 type Props = {
   snap: Snapshot;
   act: (id: number) => void;
+  undo: () => void;
+  stepBack: () => void;
   speed: Speed;
   setSpeed: (speed: Speed) => void;
   onLeave: () => void;
   onHelp: () => void;
 };
 
-export default function GameScreen({ snap, act, speed, setSpeed, onLeave, onHelp }: Props) {
+export default function GameScreen({ snap, act, undo, stepBack, speed, setSpeed, onLeave, onHelp }: Props) {
   const pick = useMemo(() => buildPick(snap), [snap]);
 
   return (
@@ -59,7 +61,7 @@ export default function GameScreen({ snap, act, speed, setSpeed, onLeave, onHelp
           <Table snap={snap} pick={pick} act={act} />
         </section>
         <aside className="right-column">
-          <ActionPanel snap={snap} act={act} />
+          <ActionPanel snap={snap} act={act} undo={undo} stepBack={stepBack} />
           <LogPanel snap={snap} />
         </aside>
       </div>

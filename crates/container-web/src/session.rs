@@ -27,9 +27,21 @@ pub struct Session {
     log: Vec<Value>,
     turns: u32,
     pending: Option<Pending>,
+    /// The table as it was before each of the human's actions this turn.
+    history: Vec<Undo>,
+}
+
+struct Undo {
+    game: Game,
+    log: Vec<Value>,
+    turns: u32,
+    pending: Option<Pending>,
+    /// True when the action was taken from the main menu, i.e. it starts a fresh action.
+    from_main: bool,
 }
 
 /// A multi-step action (produce, buy) whose log entry is completed once it has finished.
+#[derive(Clone)]
 struct Pending {
     entry: usize,
     before: Game,
@@ -85,6 +97,7 @@ impl Session {
             log: Vec::new(),
             turns: 0,
             pending: None,
+            history: Vec::new(),
         };
         let first = session.game.state.first_player;
         session.say(Some(first), format!("{} goes first", session.seats[first].name), Vec::new());
@@ -144,6 +157,12 @@ impl Session {
         );
         view["legal"] = json!(legal);
         view["log"] = json!(self.log);
+        view["canStepBack"] = json!(
+            self.history
+                .last()
+                .is_some_and(|u| matches!(u.game.phase, Phase::Arrange(_)))
+        );
+        view["canUndo"] = json!(!self.history.is_empty());
         view["gameOver"] = json!(self.is_over());
         view["results"] = self.results();
         view
@@ -181,7 +200,46 @@ impl Session {
             .legal_actions()
             .get(id)
             .ok_or_else(|| format!("no legal action {id}"))?;
-        self.play(seat, action)
+        self.history.push(Undo {
+            game: self.game.clone(),
+            log: self.log.clone(),
+            turns: self.turns,
+            pending: self.pending.clone(),
+            from_main: matches!(self.game.phase, Phase::Main),
+        });
+        if let Err(e) = self.play(seat, action) {
+            self.history.pop();
+            return Err(e);
+        }
+        if self.is_over() {
+            self.history.clear();
+        }
+        Ok(())
+    }
+
+    /// Takes back just the last single step (a container placement).
+    pub fn step_back(&mut self) -> Result<(), String> {
+        let u = self.history.pop().ok_or("nothing to undo")?;
+        self.game = u.game;
+        self.log = u.log;
+        self.turns = u.turns;
+        self.pending = u.pending;
+        Ok(())
+    }
+
+    /// Takes back the human's last action this turn, or cancels the one in progress.
+    pub fn undo(&mut self) -> Result<(), String> {
+        while let Some(u) = self.history.pop() {
+            let from_main = u.from_main;
+            self.game = u.game;
+            self.log = u.log;
+            self.turns = u.turns;
+            self.pending = u.pending;
+            if from_main {
+                return Ok(());
+            }
+        }
+        Err("nothing to undo".into())
     }
 
     /// The computer opponent whose turn it is takes one action. Returns false when it is not a bot's turn.
@@ -189,6 +247,7 @@ impl Session {
         if !self.current_is_bot() {
             return Ok(false);
         }
+        self.history.clear();
         let seat = self.game.current_player();
         let obs = self
             .game

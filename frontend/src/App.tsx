@@ -6,7 +6,7 @@ import Setup from "./Setup";
 import { useGame } from "./useGame";
 
 export default function App() {
-  const { snap, act, start, leave, speed, setSpeed, error, dismissError } = useGame();
+  const { snap, act, undo, stepBack, start, leave, speed, setSpeed, error, dismissError } = useGame();
   const [help, setHelp] = useState(false);
 
   return (
@@ -15,6 +15,8 @@ export default function App() {
         <GameScreen
           snap={snap}
           act={act}
+          undo={undo}
+          stepBack={stepBack}
           speed={speed}
           setSpeed={setSpeed}
           onLeave={leave}

@@ -143,7 +143,7 @@ h1 em { color: #f5b84b; font-style: normal; }
 .right-column .action-panel { padding: 14px; }
 .table { display: grid; gap: 14px; }
 .table-seats { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; }
-.table-middle { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(190px, 1fr) minmax(260px, 1.5fr); gap: 14px; }
+.table-middle { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(260px, 1.5fr); gap: 14px; }
 .harbor { padding: 12px; border: 1px solid #293145; border-top: 3px solid; border-radius: 12px; background: #151a29; }
 .harbor-mine { background: #181e30; }
 .harbor-active { box-shadow: 0 0 0 1px #f5b84b66, 0 0 18px #f5b84b22; }
@@ -232,3 +232,20 @@ h1 em { color: #f5b84b; font-style: normal; }
 .zone-ocean .ship-token { flex: 1 1 110px; max-width: 170px; box-shadow: 0 6px 14px #0008; }
 .zone-ocean .ship-token .container-stack { min-height: 20px; }
 .zone-ocean .zone-ships > .empty-lot { align-self: center; font-style: italic; }
+.menu-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.menu-tab { justify-content: center; }
+.menu-tab > span { flex: 0 1 auto; }
+.menu-tab-open { border-color: #f5b84b; background: #292536; }
+.menu-chevron { color: #778198; }
+.menu-tab-open .menu-chevron { transform: rotate(180deg); }
+.menu-options { display: grid; gap: 8px; padding: 10px; border: 1px solid #323b50; border-radius: 8px; background: #151a28; }
+.menu-sub { display: grid; gap: 5px; }
+.menu-sub-title { color: #8992aa; font: 500 10px "DM Mono"; letter-spacing: .08em; }
+.lot-label { display: inline-flex; align-items: center; gap: 6px; }
+.lot-label .container { margin: 0; }
+.undo-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; margin-top: 8px; width: 100%; padding: 7px 10px; border: 1px dashed #3d4760; border-radius: 8px; background: transparent; color: #a7b0c6; cursor: pointer; font: inherit; font-size: 12px; }
+.undo-button:hover { border-color: #f5b84b; color: #f5b84b; }
+.lot-choice:disabled { opacity: .4; cursor: not-allowed; border-color: #323b50; background: #202638; }
+.table-waters { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.table-waters > * { flex: 1; }
+.zone-island .island-rows { grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px 14px; }

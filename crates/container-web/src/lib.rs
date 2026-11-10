@@ -46,6 +46,16 @@ impl Game {
         self.session.act(id).map_err(|e| JsError::new(&e))
     }
 
+    /// Takes back the last single step, such as one container placement.
+    pub fn step_back(&mut self) -> Result<(), JsError> {
+        self.session.step_back().map_err(|e| JsError::new(&e))
+    }
+
+    /// Takes back the last action of the human's turn (or cancels the one in progress).
+    pub fn undo(&mut self) -> Result<(), JsError> {
+        self.session.undo().map_err(|e| JsError::new(&e))
+    }
+
     /// Lets the computer opponent whose turn it is take one action. False if it is not a bot's turn.
     pub fn step(&mut self) -> Result<bool, JsError> {
         self.session.step().map_err(|e| JsError::new(&e))
