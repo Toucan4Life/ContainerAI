@@ -26,6 +26,22 @@ Open the folder in VS Code and choose **Reopen in Container**. After setup, chec
 python -c "import torch; print(torch.cuda.is_available())"
 ```
 
+## Frontend
+
+The UI lives in [`frontend/`](frontend/): React + TypeScript + Vite. You play one human seat against 2–4 computer opponents, from setup to the final scores.
+
+The rules run in the browser. `crates/container-web` wraps the engine and bots in a JSON session and compiles to WASM. The UI renders each snapshot and sends back the id of a legal action. Clickable containers on the board (buying, seizing, Bank cash-lot bids) are the actions you can take.
+
+Requirements: the `wasm32-unknown-unknown` target and `wasm-bindgen-cli` matching the crate version (0.2.130).
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version 0.2.130
+cd frontend
+npm install
+npm run dev     # builds the WASM first (npm run wasm), then serves on :5173
+```
+
 ## Engine
 
 The rules engine is the library crate `crates/container-engine` (10th Anniversary rules, 3–5 players).
