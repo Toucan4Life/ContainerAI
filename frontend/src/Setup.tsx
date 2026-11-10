@@ -77,8 +77,8 @@ export default function Setup({ onStart, onHelp, error }: Props) {
                 onChange={(e) => setKind(index, e.target.value)}
                 aria-label={`Opponent ${BOT_NAMES[index]}`}
               >
-                {(opponents ?? [{ id: kind, name: kind, description: "" }]).map((o) => (
-                  <option key={o.id} value={o.id}>{o.name}</option>
+                {(opponents ?? [{ id: kind, name: kind, description: "", elo: 0 }]).map((o) => (
+                  <option key={o.id} value={o.id}>{o.name} · ELO {o.elo}</option>
                 ))}
               </select>
               {index === kinds.length - 1 && kinds.length > 2 ? (

@@ -15,6 +15,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
+name = "container-arena"
+version = "0.1.0"
+dependencies = [
+ "container-bots",
+ "container-engine",
+]
+
+[[package]]
 name = "container-bots"
 version = "0.1.0"
 dependencies = [
@@ -24,6 +32,14 @@ dependencies = [
 [[package]]
 name = "container-engine"
 version = "0.1.0"
+
+[[package]]
+name = "container-env"
+version = "0.1.0"
+dependencies = [
+ "container-bots",
+ "container-engine",
+]
 
 [[package]]
 name = "container-web"

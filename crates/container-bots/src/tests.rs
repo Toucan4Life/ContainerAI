@@ -2,7 +2,7 @@ use container_engine::action::Action;
 use container_engine::config::{GameConfig, GameLength, MAX_PLAYERS, MIN_PLAYERS};
 use container_engine::game::Game;
 
-use crate::{OPPONENTS, create};
+use crate::{OPPONENTS, create, magnate};
 
 const LIMIT: usize = 20_000;
 
@@ -144,4 +144,56 @@ fn the_simple_opponent_plays_better_than_the_random_one() {
         simple > random + 5.0,
         "the simple opponent averaged {simple:.1}, the random ones {random:.1}"
     );
+}
+
+#[test]
+fn magnate_beats_merchant_at_every_length() {
+    for length in [GameLength::Short, GameLength::Standard, GameLength::Extended] {
+        let (mut won, mut games) = (0, 0);
+        for players in MIN_PLAYERS..=MAX_PLAYERS {
+            for seed in 0..6 {
+                // Seat 0 is Magnate, everyone else plays Merchant.
+                let table = config(players, length, seed);
+                let Played { game, .. } =
+                    play_with(table, |seat| if seat == 0 { magnate::ID } else { "merchant" });
+                let results = game.results().expect("a finished game");
+                won += usize::from(results.winners == [0]);
+                games += 1;
+            }
+        }
+        assert!(
+            won * 10 >= games * 9,
+            "Magnate won {won} of {games} games at the {length:?} length"
+        );
+    }
+}
+
+#[test]
+fn features_fill_their_vectors_in_every_phase() {
+    use crate::features::{ACTION_DIM, STATE_DIM, encode_action, encode_state, thin};
+    let mut seen = std::collections::HashSet::new();
+    for players in 3..=5 {
+        let mut game = Game::new(GameConfig::new(players).with_seed(5)).unwrap();
+        let mut bots: Vec<_> = (0..players)
+            .map(|s| create(["random", "simple", "merchant"][s % 3], s as u64).unwrap())
+            .collect();
+        let mut state = vec![0.0f32; STATE_DIM];
+        let mut action = vec![0.0f32; ACTION_DIM];
+        while !game.is_terminal() {
+            let seat = game.current_player();
+            let obs = game.observation(seat).unwrap();
+            let legal = game.legal_actions();
+            encode_state(&obs, &mut state);
+            assert!(state.iter().all(|x| x.is_finite() && (-0.01..=12.0).contains(x)), "{obs:?}");
+            for &a in &legal {
+                encode_action(&obs, a, &mut action);
+                assert!(action.iter().all(|x| x.is_finite()));
+                seen.insert(std::mem::discriminant(&a));
+            }
+            assert!(thin(legal.len()).len() <= crate::features::MAX_ACTIONS);
+            let a = bots[seat].choose(&obs, &legal);
+            game.apply(a).unwrap();
+        }
+    }
+    assert!(seen.len() >= 18, "only {} action kinds met", seen.len());
 }

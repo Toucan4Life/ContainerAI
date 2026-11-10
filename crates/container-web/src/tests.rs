@@ -29,6 +29,17 @@ fn bots_play_a_whole_game_and_every_snapshot_is_well_formed() {
 }
 
 #[test]
+fn magnate_plays_a_whole_game_in_a_session() {
+    let mut session = Session::new(&config(&["magnate", "merchant", "magnate", "simple"], 5)).unwrap();
+    let mut steps = 0;
+    while session.step().unwrap() {
+        steps += 1;
+        assert!(steps < 20_000, "the game must end");
+    }
+    assert_eq!(session.snapshot()["gameOver"], true);
+}
+
+#[test]
 fn a_human_gets_legal_actions_only_on_their_own_turn() {
     let mut session = Session::new(&config(&["human", "simple", "simple"], 7)).unwrap();
     let mut human_moves = 0;
@@ -71,5 +82,12 @@ fn bad_configurations_are_refused() {
 #[test]
 fn the_opponent_list_names_every_bot() {
     let list: Value = serde_json::from_str(&crate::opponents_json()).unwrap();
-    assert_eq!(list.as_array().unwrap().len(), 2);
+    assert_eq!(list.as_array().unwrap().len(), container_bots::OPPONENTS.len());
+}
+
+#[test]
+fn the_opponent_list_is_ordered_by_rating() {
+    let list: Value = serde_json::from_str(&crate::opponents_json()).unwrap();
+    let elos: Vec<u64> = list.as_array().unwrap().iter().map(|o| o["elo"].as_u64().unwrap()).collect();
+    assert!(elos.windows(2).all(|w| w[0] <= w[1]));
 }

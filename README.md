@@ -9,7 +9,7 @@ A digital version of the board game **Container**, built to:
 
 - **Game engine:** Rust, for fast simulation during training.
 - **Training:** Python with PyTorch (CUDA).
-- **UI:** to be decided.
+- **UI:** React + TypeScript + Vite, with the rules and bots compiled to WebAssembly.
 
 ## Development
 
@@ -57,16 +57,423 @@ cargo test -p container-engine
 
 ## Opponents
 
-The crate `crates/container-bots` holds the computer opponents. An opponent implements `Opponent::choose(&Observation, &[Action]) -> Action`, so it only sees what its seat sees. `OPPONENTS` lists the ones the UI offers, and `create(id, seed)` builds one. A seed gives the same choices every time. Opponents trained with PyTorch are meant to be added to the same list.
+The crate `crates/container-bots` holds the computer opponents. An opponent implements `Opponent::choose(&Observation, &[Action]) -> Action`, so it only sees what its seat sees. `OPPONENTS` lists the ones the UI offers, and `create(id, seed)` builds one. A seed gives the same choices every time. Every entry carries an `elo` rating, which the UI shows next to the name. The scripted bots' ratings come from `training/ladder.json`. Magnate is not on the ladder, so its rating is the result of `anchors rate` (see [Exporting a net to the web UI](#exporting-a-net-to-the-web-ui)). Opponents trained with PyTorch are added to the same list once they are rated.
 
-| Id | Name | Plays |
-|---|---|---|
-| `random` | Random | Any legal action, chosen at random. |
-| `simple` | Simple | The legal action with the highest fixed priority, and a random one among equals. It produces, loads the ship, delivers to the Island and buys cheap containers, and bids a quarter of its cash in delivery auctions. It takes a loan only at $0, repays one when it holds $25 or more, and never builds, calls the Bank or buys out. |
+| Id | Name | ELO | Plays |
+|---|---|---|---|
+| `random` | Random | 0 | Any legal action, chosen at random. |
+| `simple` | Simple | 263 | The legal action with the highest fixed priority, and a random one among equals. It produces, loads the ship, delivers to the Island and buys cheap containers, and bids a quarter of its cash in delivery auctions. It takes a loan only at $0, repays one when it holds $25 or more, and never builds, calls the Bank or buys out. |
+| `merchant` | Merchant | 932 | Simple's priorities with 32 parameters tuned by evolution strategy in self-play (`arena` crate, `tune` binary): it also builds, borrows and bids by cargo. |
+| `magnate` | Magnate | 2280 | The net from `runs/defense_run2_vs_exploiter_30m/final.pt`, embedded as `weights/magnate.bin`. It plays the action it rates best and never repeats itself in an identical position (see [Stalls and memory safety](#stalls-and-memory-safety)). It beats Merchant about 99.9% of the time. |
 
 ```sh
 cargo test -p container-bots
 ```
+
+Unoptimised, a net's decision is tens of times slower than in release (about 0.64 ms there). The first debug run of the suite took about 5 minutes on one thread, so a CPU/GPU monitor looked idle and it seemed hung. The workspace `Cargo.toml` therefore builds `container-bots` at `opt-level = 3` even in the dev profile, which brings the suite to about 25 seconds.
+
+`features.rs` encodes a state and its legal actions as vectors (seats relative to the viewer), and `neural.rs` runs a trained policy/value net (`weights.bin`, format `CNTW`) in pure Rust, so the same net runs natively and in the browser's WebAssembly. A fixture exported from Python (`python -m training.make_fixture`) keeps the Rust forward pass equal to the numpy reference.
+
+## Arena and ratings
+
+`crates/container-arena` plays bots against each other at mixed 3-, 4- and 5-seat tables, with a seed per game so runs are reproducible.
+
+```sh
+cargo run --release -p container-arena -- --bots random,simple,merchant --games 2000 --players 3,4,5 --out games.jsonl
+```
+
+Because Container is a multiplayer game, ratings come from a Bradley-Terry fit over every pairing at every table (`training/elo.py`), anchored at Random = 0, with bootstrap confidence intervals. A rating depends on the field it was measured against, so the ladder anchors are rated at mixed tables of Random, Simple and Merchant. A game that stalls (the engine has no anti-stall rule) has no result, so the Rust arena abandons it after 50,000 actions and the Python evaluations (`anchors rate`, `duel`, the trainer's final evaluation) drop it. Neither counts it as a loss. A net that stalls often is therefore not penalised in its ELO, and no evaluation reports a stall count (see [Interpreting evaluations](#interpreting-evaluations-and-planning-experiments)).
+
+## Training
+
+`training/` is a PyTorch pipeline. The environment is a Rust cdylib (`crates/container-env`) that steps hundreds of games in parallel behind a C ABI.
+
+```sh
+cargo build --release -p container-env
+.venv/bin/python -m training.train --name run1 --budget-minutes 30   # budget is adjustable upward
+```
+
+A run does imitation of Merchant (DAgger), then PPO league self-play: the learner sits at tables with frozen earlier checkpoints and the scripted bots, rewarded by final rank and score margin. 8% of the budget is kept for the final evaluation and export. Everything is written to `runs/<name>/` (`metrics.jsonl`, `status.json`, checkpoints, and `weights.bin` for the Rust bot). Training rows include `games_per_sec`, the number to watch when optimising.
+
+### Anchors
+
+The scripted bots stop measuring a strong net: beating Merchant 97% of the time cannot be told from 99%. Trained nets therefore join the ladder as fixed, rated opponents.
+
+```sh
+.venv/bin/python -m training.anchors add scout runs/run1/final.pt   # rates it against the whole ladder, stores it in training/anchors/
+.venv/bin/python -m training.anchors rate runs/run1/final.pt        # rates it the same way without storing it
+.venv/bin/python -m training.anchors duel runs/exploit_run2/final.pt run2   # alone against copies of one anchor; stores nothing
+.venv/bin/python -m training.anchors list
+```
+
+`rate` and `duel` take `--games` (default 3000) and `--seed` (default 7). Rate with two seeds before believing a gap of a few ELO: the same net rated with seeds 7 and 8 at 2,000 games differed by about 12 ELO. `duel` also takes `--sample-target`, which makes the anchor sample from its policy instead of playing its best action.
+
+Evaluation seats the net with two to four opponents drawn from the scripted bots and every anchor (Merchant is always in the field) and rates it by maximum likelihood against their ratings. A run started afterwards also meets the anchors as permanent league opponents. Re-adding a name replaces it and re-rates it against the others; the other anchors are not refitted, so add them in order of strength.
+
+A game that stalls (the engine has no anti-stall rule; the env ends one after 2500 actions) counts as a loss for every seat (reward 0) instead of being dropped, so the policy learns to finish games. `stalled` is logged per iteration and charted. This applies to training only. The evaluations in `training/anchors.py` (`anchors rate`, `anchors duel` and the trainer's checkpoint evaluations) drop stalled games instead, so a stall never lowers a rating.
+
+### Exploiters
+
+A best-response exploiter is a net trained only to beat one fixed anchor, to expose that anchor's weaknesses (the "main exploiter" of league training).
+
+```sh
+.venv/bin/python -m training.train --name exploit_run2 --exploit run2 --budget-minutes 30
+```
+
+Every table seats the learner once (3 to 5 players) and every other seat plays the anchor. The learner starts from the anchor's weights (override with `--init`), skips imitation, keeps no frozen snapshots and runs PPO against that one opponent. `--target-mode greedy` (the default) makes the anchor play its best action, the way the ladder rates it; `sample` makes it sample from its policy as it does in league training.
+
+Each evaluation logs two things. `elo`, `games` and `vs_<opponent>` are the normal ladder evaluation, identical to any other run, so an exploiter is directly comparable with every other net. The `duel_*` keys come from exploit tables (the net in one seat, the anchor greedy in all the others): `duel_vs_<anchor>` is the share of opponents beaten (0.5 for equal play), `duel_win_rate` is the share of games won against `duel_fair_rate` (what equal players would win) and `duel_margin` is the points ahead of the average opponent. The dashboard shows them on an "Exploit duel" card, which only appears for runs that have them. An exploit evaluation plays both sets of games, so it takes about twice as long as a normal one; with a budget of a couple of minutes the final evaluation can overrun the 8% reserve (a 1.5-minute smoke test finished after 103 s). At 30 minutes the reserve is ample.
+
+An exploiter's duel numbers say how well it beats copies of the anchor, not how strong it is: see the results below. Rate it on the whole ladder with `python -m training.anchors rate runs/exploit_run2/final.pt`. `anchors add` registers it, which also makes it a permanent opponent in later runs. `exploit_run2` is registered at 2174.4 ELO and is therefore a permanent opponent for runs started after the control experiment.
+
+### Throughput
+
+`python -m training.profile_iter [--envs 256 --cprofile]` times one self-play iteration (rollout, advantages, PPO update) and prints games per second. On the dev box (12 CPUs, RTX 3080) it took the loop from about 26 to about 130 games/s:
+
+| Change | Why it helped |
+|---|---|
+| Rolling refill (`Roller`): a finished game is replaced at once and unfinished games carry over | With lockstep batches over half of all steps ran with fewer than 32 of 256 games alive (the long tail); about 2x |
+| Action layers run only on real actions (`PolicyNet` compacts padded batches) | Batches were padded to 48 actions while most decisions have under 20; the PPO update went from 1.4 s to 0.2 s |
+| Rollout forward in CUDA graphs on static, width-bucketed buffers, Gumbel-max sampling | The loop was launch-bound: four tiny nets per step, a sync in `Categorical` and in `nonzero` |
+| One `.cpu()` per step, pinned env buffers, vectorised rollout packaging, TF32 | Fewer host/device round trips |
+
+`test_roller.py` checks the optimised rollout: the logged log-probs and values equal a fresh forward pass, sampling follows the policy, games carry over, and evaluation plays exactly the requested games. More than about 384 envs does not help and the GPU may be shared, so mind its memory.
+
+### Dashboard
+
+```sh
+.venv/bin/python -m training.dashboard.server --runs runs --port 8765
+```
+
+Open http://127.0.0.1:8765 to follow a run live: ELO over time against the ladder, win rate per scripted bot and anchor, reward, losses, entropy/KL, throughput, budget used, and an overlay to compare runs. Exploiter runs add an "Exploit duel" card. The evaluations table scrolls sideways inside its card when a run logs many columns.
+
+```sh
+.venv/bin/python -m pytest training
+```
+
+### Training research and operational notes
+
+This section records measured facts from the initial training work so future changes can be
+compared against a known baseline. The figures below apply to the development machine used for
+these runs (12 CPU threads and an RTX 3080); do not assume they transfer unchanged to another
+machine.
+
+#### Current ladder and completed runs
+
+The ratings are field-dependent estimates, not absolute measures of playing strength. They are
+anchored at Random = 0 and are only meaningful relative to the opponents used during evaluation.
+
+| Opponent | ELO | Evidence |
+|---|---:|---|
+| Random | 0 | Fixed rating anchor. |
+| Simple | 263 | Scripted-bot arena evaluation. |
+| Merchant | 932 | Scripted-bot arena evaluation. |
+| `run1` | 2173 | 3,000 anchor-rating games; beats Merchant about 99.9%. |
+| `exploit_run2` | 2174 | 3,000-game ladder rating; specialist exploiter of `run2`. |
+| `run2` | 2239 | 3,000 anchor-rating games; beats `run1` 59.8%. |
+
+The strongest nets so far are not on the ladder: `defense_run2_vs_exploiter_30m` (the UI's Magnate,
+about 2280) and `control_run2_30m` (about 2279) are tied; see the control experiment and
+[Exporting a net to the web UI](#exporting-a-net-to-the-web-ui).
+`run1` used a 60-minute requested budget. The trainable portion completed in 3,316.5 seconds,
+covering 798,941 games and 169,924,042 learner decisions. Its final scripted-bot-only evaluation
+reported 2106 ELO, but that score is weak evidence because it had effectively saturated the
+scripted field.
+
+`run2` resumed from `run1/final.pt`, skipped imitation, used a 30-minute requested budget, and
+trained for 1,661.0 seconds: 358,992 games and 58,450,496 decisions. Its final 1,024-game
+evaluation beat `run1` 60.7% of the time. The independent 3,000-game anchor rating was 59.8%,
+which supports a small, real improvement (roughly 66 ELO), not a large jump.
+
+The corresponding checkpoints are preserved at `runs/run1/`, `runs/run2/`, and
+`runs/exploit_run2/`; their evaluated copies are `training/anchors/run1.pt`,
+`training/anchors/run2.pt`, and `training/anchors/exploit_run2.pt`. Keep anchor checkpoints and
+`training/ladder.json` together: a ladder entry without its checkpoint cannot be used as a league
+opponent.
+
+#### How the learner works
+
+* The policy/value net is a feed-forward, hidden-size-256 model. It has a two-layer ReLU state
+  trunk, combines the trunk with each action vector to emit one logit per legal action, and has a
+  separate value head. The exact implementation is `training/model.py`.
+* `features.rs` encodes observations from the current seat's relative perspective. It includes
+  visible player holdings, lots, ships, loans, the bank, supply, scoring card, turn/phase data and
+  phase-specific data. Hidden information remains hidden: other players' cash, scoring cards and
+  face-down bids are not exposed by the engine.
+* There can be up to 145 legal actions. Training and inference thin a longer list evenly to at
+  most 48 actions. A training game normally has roughly 650--800 engine actions and about 613
+  learner decisions with more than one choice.
+* Imitation uses Merchant labels with DAgger-style relabelling for the first 17% of the requested
+  wall-clock budget. PPO league self-play uses four epochs, an 8,192-decision minibatch, clipping
+  0.2, entropy coefficient 0.01 and value coefficient 0.5. Eight percent of the budget is reserved
+  for final evaluation and export.
+* Learner reward is `0.6 * win fraction + 0.4 * (0.5 + 0.5 * tanh(score margin / 50))`. The value
+  head learns that final outcome; there is no discounted intermediate reward.
+* League tables have 3--5 seats. In self-play, 25% of tables contain only the learner. The other
+  tables mix learner seats with frozen earlier checkpoints and scripted opponents. Scripted
+  selection is Merchant 60%, Simple 30%, Random 10%; a non-learner seat uses a frozen checkpoint
+  45% of the time when one is available.
+
+The saved Rust/WASM weights use the `CNTW` binary format. Any feature-layout or architecture
+change invalidates existing checkpoints and requires retraining, a new weights fixture, and a
+Rust/Python parity test. The browser does not automatically expose newly trained nets: see
+[Exporting a net to the web UI](#exporting-a-net-to-the-web-ui) for the steps.
+
+#### Measured performance facts
+
+The initial unoptimised training loop managed about 26 games/s. The current profiler reaches about
+130 games/s; completed real runs averaged around 100 games/s because the mixture of tables,
+evaluation and PPO work differs from the steady-state profiler.
+
+The profiler shows that the engine is not currently the main bottleneck. In a representative
+1.764-second iteration, the C-ABI environment calls (`advance`, `observe`, `step`) took about
+0.364 seconds, while GPU-to-host copies alone took 0.396 seconds and tensor transfers took 0.236
+seconds. This is a Python-level profile, not a native `perf` flamegraph. No full engine-only
+flamegraph has been collected yet.
+
+The optimisations already made are:
+
+* A rolling refill keeps the 256 environment slots busy: finished games are immediately replaced,
+  while unfinished games carry into the next rollout. Before this, more than half of lockstep
+  rollout steps had fewer than 32 of 256 games still alive.
+* The action head skips padded actions when fewer than 60% of action slots are real. Most
+  decisions have fewer than 20 legal actions despite padding to 48.
+* CUDA graphs use width buckets of 8, 16, 32 and 48 actions; Gumbel-max sampling happens inside
+  the graph. Their graph pool is shared and released after evaluation to avoid GPU memory growth.
+* Environment buffers are pinned, the rollout performs one CPU transfer per step, rollout
+  packaging is vectorised, and TF32 matrix multiplication is enabled.
+* The Rust batch environment caches player counts, avoids `advance` work except for idle
+  environments, and avoids clearing observations for non-pending games.
+
+More than about 384 environments did not improve throughput on the measured GPU, while 512
+environments ran out of memory. The default 256 environments is therefore intentional. A possible
+future experiment is running two environment batches in parallel to overlap CPU simulation with
+GPU inference; it is unmeasured and must not be described as a realised gain.
+
+#### Stalls and memory safety
+
+The base game rules do not force progress: a player may repeatedly choose legal, non-progressing
+actions, including pass-like repricing when there is nothing to move. Before the fix, learner-only
+tables could stall and be discarded, which both removed their learning signal and allowed their
+stored decisions to accumulate on the GPU.
+
+The training environment now declares a game stalled after 2,500 actions. Every seat receives
+reward 0, rather than the game being dropped. `stalled` is logged per iteration and shown in the
+dashboard. In the post-fix smoke test and the completed `run1`/`run2` runs, stalls stayed at
+approximately zero. This is a training safeguard, not an engine rule change; normal UI games
+still use the underlying rules unchanged.
+
+A net can also stall when it plays greedily (always the action it rates best), which is how every
+rating protocol and every shipped bot plays. The net was trained under sampling, so nothing taught
+it to leave a loop that argmax repeats: when its best action leaves its own input unchanged, the
+same input gives the same output and the same action forever. The engine only forces an end when
+every player is broke (no cash, all loans taken, no containers) and has nothing but idle moves, so
+a loop in which one seat can still afford things never ends. Plain greedy Magnate (without the
+guard below) stalled like this:
+
+| Protocol | Games | Stalled |
+|---|---:|---:|
+| `anchors rate` (Python, seed 7) | 3,000 | 91 (3.0%) |
+| the same protocol replicated in Rust (seed 11) | 3,000 | 109 (3.6%) |
+| Rust, all Magnate, 3-5 players, 3 lengths | 60 per cell | 3-5 per cell |
+| Rust, Magnate + Merchant | 60 per cell | 1-3 per cell |
+| Rust, Magnate + Random + Simple + Merchant | 60 per cell | 4-11 per cell |
+| Rust, Magnate + Random | 60 per cell | 14-17 per cell |
+
+Tables with Random froze most (14 of 22 tables of Magnate, Merchant, Random, Random in the Python
+protocol). Two traces show the loops. An all-Magnate 3-player game repeated Sail(Ocean) /
+Sail(Harbor) and RequestLoan / RepayLoan indefinitely. At a mixed 4-player table the three other
+seats were broke at the loan cap, while Magnate had $154, 50 containers in its holding and Produce
+legal, and idle-sailed one colour short of the end of the game.
+
+The fix is a repetition guard in `Neural` (`neural.rs`) that applies only to greedy play
+(temperature 0), so training and sampling are untouched. It fingerprints the encoded input (FNV-1a
+over the f32 bits; std's `DefaultHasher` is not stable across Rust versions) and remembers which
+actions it has already played from that exact input. When an input comes back it plays the best
+action not yet played from it, cycling through the actions in score order and starting over when all
+have been tried. The match is exact, so it only changes play inside a true loop.
+
+Measured effect: 0 stalled games in 720 Rust games (the four table mixes above, 3 lengths, 3-5
+players, 20 seeds each), where plain greedy froze up to 17 of 60 in a cell. Rating did not move:
+2285.8 plain and 2285.8 guarded on identical tables (3,000 games, seed 11). Games with Random now
+take longer, up to about 4,600 actions (Extended, Magnate + Random), where they used to freeze.
+
+The Python evaluations have no guard and drop stalled games, so the Python ratings of this net are
+the plain greedy net with 3% of its games missing. They agree with the guarded Rust bot, so the
+guard did not inflate the number. No other trained net has been checked for greedy stalls.
+
+GPU memory also requires care: captured CUDA graphs retain their static buffers. Reusing one
+shared graph pool, discarding obsolete frozen-net graphs and releasing graphs after evaluation
+keeps allocated memory roughly flat in the observed training runs (about 2--2.4 GiB allocated).
+The trainer also uses PyTorch's `expandable_segments` allocator setting because rollout sizes vary.
+
+#### Exploiter experiment (`exploit_run2`)
+
+`exploit_run2` is a best-response exploiter of `run2` (`--exploit run2`, seed 3, greedy target). It
+started as a copy of `run2`, trained for 1,665.6 seconds of a 30-minute budget (197,144 games,
+37,236,209 decisions, about 118 games/s). It was later registered at 2174.4 ELO as a permanent
+league opponent for the defense experiment below. Its training-time duel evaluations (256 games,
+1,024 for the final one) show the share of opponents beaten rising from 0.52 to about 0.64 in
+roughly the first 10 minutes and then plateauing between 0.64 and 0.71. The final evaluation won
+42.1% of games against a fair share of 25.8%, a margin of +8.67.
+
+Pure duels of 3,000 games each, where every other seat is the named net:
+
+| Player | Opponent seats | Opponent plays | Share beaten | Win rate (fair share) | Margin |
+|---|---|---|---:|---:|---:|
+| exploiter | `run2` | greedy | 0.659 | 0.394 (0.257) | +8.04 |
+| exploiter | `run2` | sampling | 0.690 | 0.433 (0.260) | +9.52 |
+| exploiter | `run1` | greedy | 0.741 | 0.487 (0.254) | +13.6 |
+| `run2` | `run1` | greedy | 0.690 | 0.433 (0.253) | +10.63 |
+| `run2` | `run2` | greedy | 0.497 | 0.247 (0.256) | -0.39 |
+| `run2` | `run2` | sampling | 0.561 | 0.316 (0.260) | +3.13 |
+
+The `run2` against `run2` row is the calibration check: equal players score about 0.5, and its duel
+ELO of 2237 matches its ladder rating of 2239. Duel ELO is rated against the opponent alone, so it
+is not a ladder rating and must not be put next to one.
+
+On the mixed ladder tables, which are the measure of strength, the exploiter is weaker than the net
+it was copied from:
+
+| Net | ELO, seed 7 | ELO, seed 8 | Beats `run2` | Beats `run1` |
+|---|---:|---:|---:|---:|
+| exploiter | 2174.4 | 2186.9 | 0.414, 0.406 | 0.499, 0.543 |
+| `run2`, re-rated with the same seeds and 2,000 games | 2233.8 | 2245.6 | n/a | 0.574, 0.614 |
+
+Both beat Merchant, Simple and Random about 100% of the time. Across the run the exploiter's
+ladder rating started at `run2`'s level (2236 at the first checkpoint) and drifted down: the mean
+over the first nine checkpoints was 2221 and over the last nine 2195, ending at 2181, while its
+duel share kept rising. Each point is one 2,000-game rating, and re-rating the same net with
+another seed moved it by about 12 ELO, so only the trend over many checkpoints means anything. The
+downward trend and the `vs_run2` fall from 0.51 to about 0.43 agree.
+
+What this establishes:
+
+* The exploiter is a specialist. It beats tables full of copies of one net (even `run1`, and even a
+  sampling `run2`) but is about 60 ELO below `run2` on mixed tables and loses to it about 59% of the
+  time there.
+* Duel results and ladder results can disagree sharply. `run2` beats `run1` 69% in pure duels but
+  only 57-61% on the mixed ladder, and the exploiter beats `run2` in duels yet loses to it on the
+  ladder. Use the ladder protocol as the measure of strength; the duel only reports how well a net
+  exploits one homogeneous field.
+* The first version of this run logged duel ELO as `elo`, so the dashboard showed 2370 for a net
+  that rates about 2181. The trainer now logs the ladder rating as `elo` and the duel numbers as
+  `duel_*`, and the `exploit_run2` log was rewritten to match: every checkpoint was re-rated with
+  2,000 ladder games (seed 7), and the `duel_*` values are the originals logged during training.
+
+#### Exploiter-in-league control experiment
+
+Two otherwise matching 30-minute continuations of `run2` (both seed 4, no imitation, starting
+from `runs/run2/final.pt`) tested whether putting the specialist in the frozen-opponent league
+improves a successor:
+
+| Run | League during training | Elapsed | Games | Final 1,024-game ELO |
+|---|---|---:|---:|---:|
+| `control_run2_30m` | `run1`, `run2`, scripted bots | 1,662.1 s | 310,225 | 2260.4 |
+| `defense_run2_vs_exploiter_30m` | control field plus `exploit_run2` | 1,669.6 s | 280,339 | 2273.6 |
+
+Final training evaluations are noisy and cannot settle a 13-ELO gap, so both checkpoints were
+evaluated under the same high-confidence protocol: 10,000 mixed-ladder games and 10,000
+homogeneous duels against greedy `exploit_run2`, both with seed 9.
+
+| Checkpoint | Mixed-ladder ELO | vs `run2` | vs `run1` | vs exploiter, mixed | vs exploiter, duel | Duel win rate (fair share) |
+|---|---:|---:|---:|---:|---:|---:|
+| control | 2279.3 | 0.549 | 0.657 | 0.649 | 0.553 | 0.325 (0.258) |
+| defense | 2278.0 | 0.544 | 0.655 | 0.651 | 0.558 | 0.320 (0.258) |
+
+The result is a tie. The defense run was 1.3 ELO lower on the 10,000-game ladder, while its duel
+share against the exploiter was 0.5 percentage points higher; neither difference establishes a
+benefit. The two 3,000-game ladder seeds also disagreed about the ordering (control 2269.9/2256.5,
+defense 2266.9/2282.9), reinforcing that the shorter final-evaluation gap was noise. Both are
+clearly stronger than their `run2` parent and both now beat the former exploiter in homogeneous
+duels, so ordinary league continuation alone learned a defense.
+
+This is one seed and one specialist, not evidence that exploiters never help. A useful next test
+would use several independent seeds or multiple exploiters and predeclare the evaluation games.
+
+What is not known:
+
+* Why the original exploiter wins only in homogeneous tables. Candidates are a niche effect
+  (copies of one deterministic net hurt each other in a way a mixed field does not) and
+  distribution shift from training against a single opponent. Neither has been tested and no
+  behaviour analysis was done.
+
+#### Exporting a net to the web UI
+
+The strongest net is in the UI as **Magnate** (`crates/container-bots/src/magnate.rs`). It is
+`runs/defense_run2_vs_exploiter_30m/final.pt`. That run and `control_run2_30m` tied (10,000-game
+ladder: 2278.0 against 2279.3), so the pick was a tie-break, not a finding: the defense net has the
+higher rating pooled over the rating runs (about 2277 against about 2273) and the higher final
+training evaluation (2273.6 against 2260.4). To ship the control net instead, replace
+`crates/container-bots/weights/magnate.bin` with `runs/control_run2_30m/weights.bin`, re-rate it and
+update `elo`; nothing else changes.
+
+Steps for exporting any net (use `magnate.rs` as the template):
+
+1. Rate it with at least two seeds and 10,000 games, for example
+   `.venv/bin/python -m training.anchors rate runs/<run>/final.pt --games 10000 --seed 9`. Two
+   3,000-game ratings of Magnate differed by 16 ELO (2266.9 and 2282.9).
+2. Copy the weights the trainer wrote next to the checkpoint:
+   `cp runs/<run>/weights.bin crates/container-bots/weights/<id>.bin` (it is byte-identical to
+   `export_weights(final.pt)`).
+3. Add `crates/container-bots/src/<id>.rs` with `ID`, `WEIGHTS = include_bytes!(..)`, a `net()`
+   behind a `OnceLock` and a `new(seed)`. Declare the module in `lib.rs`, add an `OpponentInfo` to
+   `OPPONENTS` and a branch to `create()`. `OPPONENTS` must stay in ascending `elo` order (a
+   `container-web` test checks it).
+4. `cargo test -p container-bots -p container-web`. The Magnate tests are the template: it must beat
+   Merchant at every game length and play a whole game inside a `Session` with other bots.
+5. `cd frontend && npm run wasm` (`npm run dev` and `npm run build` run it first). The setup
+   dropdown is filled from `opponents()` as "Name · ELO n", so no frontend change is needed.
+
+Magnate's `elo` label is 2280. The six ratings of it at Standard length, four in Python and two in
+Rust, range from 2267 to 2286 and pool (about 39,000 games) to about 2280 with a standard error of
+roughly 3-4. It is not a ladder anchor: `training/ladder.json` is unchanged, and `anchors add` would
+make it a permanent league opponent for later runs. The UI label measures it against the ladder
+bots, not against a human.
+
+Length: the trainer and the arena only play Standard length (`GameConfig::new(n)`), yet the net
+holds its strength at the others. Rust, guarded, 3,000 games each (seed 11, noise about 12 ELO;
+the anchors were rated at Standard, so treat the other rows as approximate):
+
+| Length | ELO | Beats `run2` |
+|---|---:|---:|
+| Short | 2268.7 | 0.538 |
+| Standard | 2286.5 | 0.549 |
+| Extended | 2289.5 | 0.574 |
+
+It beats Merchant 99.8-99.9% at every length.
+
+Rust against Python: the Rust bot is a pure-Rust forward pass of the same weights, and a Rust replica
+of the `anchors rate` protocol reproduces the Python shares. Plain greedy Rust against `run2`,
+`exploit_run2`, `run1` and Merchant won a share of 0.549, 0.664, 0.669 and 0.999; Python (10,000
+games) 0.546, 0.658, 0.656 and 0.999.
+
+Speed in the browser: in a Node run of the release WASM, one bot step took about 0.5 ms and whole
+games of 3-5 seats with Magnate took 0.2-0.6 s (340-1,200 steps). The weights are 1.5 MB of the
+1.8 MB bundle.
+
+#### Interpreting evaluations and planning experiments
+
+Do not treat a high scripted-bot ELO as proof that a new net is better. Once a net is close to
+100% against Merchant, the scripted field cannot resolve further differences. Add good checkpoints
+as anchors in order of increasing strength, then assess candidates against the entire anchor field.
+Adding an anchor does not refit ratings of existing anchors.
+
+No rating reports a stall count: the `games` field of `anchors rate` is the number requested, not
+the number rated, and the Python evaluations silently drop stalled games. A net that freezes in 3%
+of its games (greedy Magnate did before the guard) therefore still gets a clean-looking ELO from the
+other 97%. A possible improvement is to count them in `anchors.evaluate` and return a `stalled`
+field.
+
+The current evidence says `run2` is only modestly stronger than `run1`, and the self-play curve was
+noisy. The next experiments should therefore measure head-to-head performance against anchors,
+not only ELO against scripted bots. A best-response exploiter of `run2` did not produce a stronger
+net (see above). A control and a successor trained with that exploiter in the league both improved
+to about 2279 ELO, but the measured difference was a tie; do not claim a defense-league gain from
+this single paired run. Plausible but unvalidated directions are a more diverse frozen league,
+longer runs, larger or richer feature models, CPU/GPU overlap, and an information-set search layer
+on top of the net. Each requires a controlled before/after comparison and should be recorded here
+after it is measured.
 
 ## Rules decisions
 

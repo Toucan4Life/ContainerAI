@@ -145,7 +145,7 @@ export type Snapshot = {
   results: { scores: Score[]; winners: number[] } | null;
 };
 
-export type OpponentInfo = { id: string; name: string; description: string };
+export type OpponentInfo = { id: string; name: string; description: string; elo: number };
 
 export type SeatConfig = { name: string; kind: string };
 

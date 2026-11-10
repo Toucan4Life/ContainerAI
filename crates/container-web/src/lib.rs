@@ -8,7 +8,7 @@ mod session;
 
 pub use session::Session;
 
-/// The opponents the UI can seat, as a JSON list of `{id, name, description}`.
+/// The opponents the UI can seat, as a JSON list of `{id, name, description, elo}`.
 #[wasm_bindgen]
 pub fn opponents() -> String {
     opponents_json()
@@ -17,7 +17,7 @@ pub fn opponents() -> String {
 pub fn opponents_json() -> String {
     let list: Vec<_> = container_bots::OPPONENTS
         .iter()
-        .map(|o| serde_json::json!({ "id": o.id, "name": o.name, "description": o.description }))
+        .map(|o| serde_json::json!({ "id": o.id, "name": o.name, "description": o.description, "elo": o.elo }))
         .collect();
     serde_json::Value::Array(list).to_string()
 }

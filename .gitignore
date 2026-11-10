@@ -21,6 +21,7 @@ checkpoints/
 logs/
 wandb/
 *.pt
+!training/anchors/*.pt
 *.pth
 *.ckpt
 *.safetensors

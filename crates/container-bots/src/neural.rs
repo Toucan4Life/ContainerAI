@@ -1,0 +1,327 @@
+//! A neural opponent: the policy net trained in `training/`, run in plain Rust.
+//!
+//! The weights file is written by `training/model.py::export_weights`. The net scores every legal action
+//! from the state and the action's features; the opponent plays the best one, or samples from the scores
+//! at a temperature when it is meant to be weaker or less predictable.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use container_engine::action::Action;
+use container_engine::observation::Observation;
+use container_engine::rng::Rng;
+
+use crate::Opponent;
+use crate::features::{ACTION_DIM, MAX_ACTIONS, STATE_DIM, encode_action, encode_state, thin};
+
+const MAGIC: &[u8; 4] = b"CNTW";
+
+// `Neural::tried` keeps one bit per action the net considers.
+const _: () = assert!(MAX_ACTIONS <= u64::BITS as usize);
+
+/// A fully connected layer, weights stored out x in.
+#[derive(Clone, Debug)]
+struct Layer {
+    inputs: usize,
+    w: Vec<f32>,
+    b: Vec<f32>,
+}
+
+impl Layer {
+    fn apply(&self, x: &[f32], out: &mut [f32]) {
+        for (o, (row, bias)) in out.iter_mut().zip(self.w.chunks(self.inputs).zip(&self.b)) {
+            *o = *bias + row.iter().zip(x).map(|(w, x)| w * x).sum::<f32>();
+        }
+    }
+
+    fn apply_relu(&self, x: &[f32], out: &mut [f32]) {
+        self.apply(x, out);
+        out.iter_mut().for_each(|v| *v = v.max(0.0));
+    }
+}
+
+/// The trained weights. Shared between opponents, which only read them.
+#[derive(Clone, Debug)]
+pub struct Net {
+    hidden: usize,
+    t1: Layer,
+    t2: Layer,
+    ws: Layer,
+    wa: Layer,
+    h1: Layer,
+    h2: Layer,
+    v1: Layer,
+    v2: Layer,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum NetError {
+    BadMagic,
+    Truncated,
+    WrongShape,
+}
+
+impl Net {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Net, NetError> {
+        if bytes.len() < 16 || &bytes[..4] != MAGIC {
+            return Err(NetError::BadMagic);
+        }
+        let word = |i: usize| u32::from_le_bytes(bytes[4 + 4 * i..8 + 4 * i].try_into().unwrap()) as usize;
+        let (state, action, hidden) = (word(0), word(1), word(2));
+        if state != STATE_DIM || action != ACTION_DIM {
+            return Err(NetError::WrongShape);
+        }
+        let mut pos = 16;
+        let mut layer = |inputs: usize, outputs: usize| -> Result<Layer, NetError> {
+            let n = outputs * inputs + outputs;
+            let end = pos + 4 * n;
+            let data = bytes.get(pos..end).ok_or(NetError::Truncated)?;
+            let floats: Vec<f32> = data
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+                .collect();
+            pos = end;
+            let (w, b) = floats.split_at(outputs * inputs);
+            Ok(Layer {
+                inputs,
+                w: w.to_vec(),
+                b: b.to_vec(),
+            })
+        };
+        let net = Net {
+            hidden,
+            t1: layer(state, hidden)?,
+            t2: layer(hidden, hidden)?,
+            ws: layer(hidden, hidden)?,
+            wa: layer(action, hidden)?,
+            h1: layer(hidden, hidden)?,
+            h2: layer(hidden, 1)?,
+            v1: layer(hidden, hidden / 2)?,
+            v2: layer(hidden / 2, 1)?,
+        };
+        if pos != bytes.len() {
+            return Err(NetError::WrongShape);
+        }
+        Ok(net)
+    }
+
+    /// Logit of each action (one row of `ACTION_DIM` numbers per action) and the state's value.
+    pub fn forward(&self, state: &[f32], actions: &[f32]) -> (Vec<f32>, f32) {
+        let n = self.hidden;
+        let mut a = vec![0.0; n];
+        let mut h = vec![0.0; n];
+        self.t1.apply_relu(state, &mut a);
+        self.t2.apply_relu(&a, &mut h);
+        let mut hs = vec![0.0; n];
+        self.ws.apply(&h, &mut hs);
+
+        let mut z = vec![0.0; n];
+        let mut y = vec![0.0; n];
+        let mut o = [0.0];
+        let logits = actions
+            .chunks(ACTION_DIM)
+            .map(|row| {
+                self.wa.apply(row, &mut z);
+                z.iter_mut().zip(&hs).for_each(|(z, s)| *z = (*z + s).max(0.0));
+                self.h1.apply_relu(&z, &mut y);
+                self.h2.apply(&y, &mut o);
+                o[0]
+            })
+            .collect();
+
+        let mut v = vec![0.0; n / 2];
+        self.v1.apply_relu(&h, &mut v);
+        self.v2.apply(&v, &mut o);
+        (logits, o[0])
+    }
+}
+
+/// An opponent driven by a [`Net`].
+///
+/// A net that always plays its best action can freeze a table. When that action leaves the net's own
+/// input as it was, the net plays it again forever, and a game only ends once somebody produces. So
+/// a greedy net does not play the same action twice from the same input until it has played all the
+/// others. Sampling needs no such rule.
+#[derive(Clone, Debug)]
+pub struct Neural {
+    net: Arc<Net>,
+    rng: Rng,
+    temperature: f32,
+    /// For each input a greedy net has met, a bit for every action already played from it.
+    tried: HashMap<u64, u64>,
+}
+
+impl Neural {
+    /// Plays the net's best action when `temperature` is 0, and otherwise samples from the scores
+    /// divided by it.
+    pub fn new(net: Arc<Net>, seed: u64, temperature: f32) -> Self {
+        Self {
+            net,
+            rng: Rng::new(seed),
+            temperature,
+            tried: HashMap::new(),
+        }
+    }
+
+    /// The best-scoring action not yet played from this input. Once all of them have been played,
+    /// the input starts afresh.
+    fn best_untried(&mut self, logits: &[f32], input: u64) -> usize {
+        let tried = self.tried.entry(input).or_insert(0);
+        let best = |skip: u64| {
+            logits
+                .iter()
+                .enumerate()
+                .filter(|&(k, _)| skip >> k & 1 == 0)
+                .max_by(|a, b| a.1.total_cmp(b.1))
+                .map(|(k, _)| k)
+        };
+        let pick = best(*tried).unwrap_or_else(|| {
+            *tried = 0;
+            best(0).unwrap_or(0)
+        });
+        *tried |= 1 << pick;
+        pick
+    }
+}
+
+/// A hash of everything the net sees. Equal inputs get equal choices, so this tells a situation the
+/// net has been in from a new one.
+fn fingerprint(state: &[f32], acts: &[f32]) -> u64 {
+    state.iter().chain(acts).fold(0xcbf2_9ce4_8422_2325, |hash, x| {
+        x.to_bits()
+            .to_le_bytes()
+            .iter()
+            .fold(hash, |hash, &byte| (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3))
+    })
+}
+
+impl Opponent for Neural {
+    fn choose(&mut self, obs: &Observation, legal: &[Action]) -> Action {
+        let kept = thin(legal.len());
+        let mut state = vec![0.0; STATE_DIM];
+        encode_state(obs, &mut state);
+        let mut acts = vec![0.0; kept.len() * ACTION_DIM];
+        for (k, &i) in kept.iter().enumerate() {
+            encode_action(obs, legal[i], &mut acts[k * ACTION_DIM..(k + 1) * ACTION_DIM]);
+        }
+        let (logits, _) = self.net.forward(&state, &acts);
+        let pick = if self.temperature <= 0.0 {
+            self.best_untried(&logits, fingerprint(&state, &acts))
+        } else {
+            let top = logits.iter().cloned().fold(f32::MIN, f32::max);
+            let w: Vec<f64> = logits
+                .iter()
+                .map(|l| (((l - top) / self.temperature) as f64).exp())
+                .collect();
+            let mut x = (self.rng.next_u64() >> 11) as f64 / (1u64 << 53) as f64 * w.iter().sum::<f64>();
+            let mut k = 0;
+            while k + 1 < w.len() && x >= w[k] {
+                x -= w[k];
+                k += 1;
+            }
+            k
+        };
+        legal[kept[pick]]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use container_engine::config::GameConfig;
+    use container_engine::game::Game;
+
+    use super::*;
+
+    const WEIGHTS: &[u8] = include_bytes!("../tests/fixtures/parity.bin");
+    const REFERENCE: &str = include_str!("../tests/fixtures/parity.txt");
+
+    fn floats(line: &str) -> Vec<f32> {
+        line.split_whitespace().map(|x| x.parse().unwrap()).collect()
+    }
+
+    /// The opening position of a three-player game, and the actions open in it.
+    fn opening() -> (Observation, Vec<Action>) {
+        let game = Game::new(GameConfig::new(3).with_seed(1)).unwrap();
+        let obs = game.observation(game.current_player()).unwrap();
+        let legal = game.legal_actions();
+        assert!(legal.len() <= MAX_ACTIONS && legal.len() > 2);
+        (obs, legal)
+    }
+
+    #[test]
+    fn a_greedy_net_plays_its_best_action_at_first() {
+        let net = Arc::new(Net::from_bytes(WEIGHTS).unwrap());
+        let (obs, legal) = opening();
+        let mut state = vec![0.0; STATE_DIM];
+        encode_state(&obs, &mut state);
+        let acts: Vec<f32> = legal
+            .iter()
+            .flat_map(|&a| {
+                let mut row = vec![0.0; ACTION_DIM];
+                encode_action(&obs, a, &mut row);
+                row
+            })
+            .collect();
+        let (logits, _) = net.forward(&state, &acts);
+        let best = (0..legal.len()).max_by(|&a, &b| logits[a].total_cmp(&logits[b])).unwrap();
+        assert_eq!(Neural::new(net, 0, 0.0).choose(&obs, &legal), legal[best]);
+    }
+
+    #[test]
+    fn a_greedy_net_tries_the_other_actions_before_repeating_one() {
+        let net = Arc::new(Net::from_bytes(WEIGHTS).unwrap());
+        let (obs, legal) = opening();
+        let mut bot = Neural::new(net, 0, 0.0);
+        let first = bot.choose(&obs, &legal);
+        let mut played = vec![first];
+        for _ in 1..legal.len() {
+            let next = bot.choose(&obs, &legal);
+            assert!(!played.contains(&next), "{next:?} was played twice");
+            played.push(next);
+        }
+        assert_eq!(bot.choose(&obs, &legal), first, "every action has had its turn");
+    }
+
+    #[test]
+    fn a_new_position_has_no_history() {
+        let net = Arc::new(Net::from_bytes(WEIGHTS).unwrap());
+        let (obs, legal) = opening();
+        let game = Game::new(GameConfig::new(4).with_seed(2)).unwrap();
+        let other = game.observation(game.current_player()).unwrap();
+        let other_legal = game.legal_actions();
+        let mut bot = Neural::new(net.clone(), 0, 0.0);
+        for _ in 0..3 {
+            bot.choose(&obs, &legal);
+        }
+        assert_eq!(
+            bot.choose(&other, &other_legal),
+            Neural::new(net, 0, 0.0).choose(&other, &other_legal)
+        );
+    }
+
+    #[test]
+    fn the_net_matches_the_numpy_reference() {
+        let net = Net::from_bytes(WEIGHTS).unwrap();
+        let mut lines = REFERENCE.lines();
+        let n: usize = lines.next().unwrap().parse().unwrap();
+        let state = floats(lines.next().unwrap());
+        let acts: Vec<f32> = (0..n).flat_map(|_| floats(lines.next().unwrap())).collect();
+        let want_logits = floats(lines.next().unwrap());
+        let want_value = floats(lines.next().unwrap())[0];
+        let (logits, value) = net.forward(&state, &acts);
+        assert_eq!(logits.len(), n);
+        for (got, want) in logits.iter().zip(&want_logits) {
+            assert!((got - want).abs() < 1e-4, "{got} vs {want}");
+        }
+        assert!((value - want_value).abs() < 1e-4);
+    }
+
+    #[test]
+    fn bad_files_are_refused() {
+        assert_eq!(Net::from_bytes(b"nope").unwrap_err(), NetError::BadMagic);
+        assert_eq!(
+            Net::from_bytes(&WEIGHTS[..WEIGHTS.len() - 4]).unwrap_err(),
+            NetError::Truncated
+        );
+    }
+}
