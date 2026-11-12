@@ -1,0 +1,281 @@
+{
+ "3": {
+  "sigma": [
+   0.0,
+   0.15136823936627938,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.1143680917337082,
+   0.7342636689000124
+  ],
+  "solver": "nash_conv_minimizer",
+  "concept": "Nash candidate (verified by gain)",
+  "is_nash": true,
+  "gain": 0.0,
+  "nash_conv": 0.0,
+  "verified_gain": 0.0,
+  "verify_method": "enumerate",
+  "entropy": 0.7605819468226505,
+  "bootstrap": {
+   "mean": 0.023422657267997478,
+   "p95": 0.05999934628426743,
+   "reps": 200
+  },
+  "value": 0.3333331387494478,
+  "values": {
+   "run2": 0.16716564052395272,
+   "magnate": 0.3333331387494478,
+   "control": 0.20701048356492713,
+   "defense": 0.24889140334744497,
+   "exploit_run2": 0.16645590444201736,
+   "merchant": 0.0,
+   "psro02": 0.33333313874944775,
+   "psro03": 0.3333331387494478
+  },
+  "solvers": [
+   {
+    "method": "replicator",
+    "concept": "Nash candidate (verified by gain)",
+    "gain": 2.8377086014330644e-08,
+    "nash_conv": 8.513125804299193e-08,
+    "support": [
+     "magnate",
+     "psro02",
+     "psro03"
+    ],
+    "entropy": 0.7605816741347273
+   },
+   {
+    "method": "regret_matching",
+    "concept": "CCE (coarse correlated equilibrium of the n-player game, via average regret); the average strategy's own Nash gain is NOT guaranteed small",
+    "gain": 8.556700817674567e-06,
+    "nash_conv": 2.5670102453023702e-05,
+    "support": [
+     "magnate",
+     "psro02",
+     "psro03"
+    ],
+    "entropy": 0.7610786860906282
+   },
+   {
+    "method": "nash_conv_minimizer",
+    "concept": "Nash candidate (verified by gain)",
+    "gain": 0.0,
+    "nash_conv": 0.0,
+    "support": [
+     "magnate",
+     "psro02",
+     "psro03"
+    ],
+    "entropy": 0.7605819468226505
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 8.348488567122558e-12,
+    "nash_conv": 2.5045465701367675e-11,
+    "support": [
+     "magnate",
+     "psro02",
+     "psro03"
+    ],
+    "entropy": 0.7605819471735273
+   }
+  ],
+  "accounting": {
+   "games": 7104,
+   "stalled": 1
+  }
+ },
+ "4": {
+  "sigma": [
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.3692040070504933,
+   0.6307959929495067
+  ],
+  "solver": "support_enumeration",
+  "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+  "is_nash": true,
+  "gain": 1.912359159916832e-14,
+  "nash_conv": 7.649436639667329e-14,
+  "verified_gain": 1.912359159916832e-14,
+  "verify_method": "enumerate",
+  "entropy": 0.6585306803650917,
+  "bootstrap": {
+   "mean": 0.013465900015228715,
+   "p95": 0.03532963566963398,
+   "reps": 200
+  },
+  "value": 0.24999999222408367,
+  "values": {
+   "run2": 0.055008293201676495,
+   "magnate": 0.18027802570138524,
+   "control": 0.12739534442737147,
+   "defense": 0.08462333188488616,
+   "exploit_run2": 0.10701639626948106,
+   "merchant": 0.0,
+   "psro02": 0.2499999922241028,
+   "psro03": 0.2499999922240725
+  },
+  "solvers": [
+   {
+    "method": "replicator",
+    "concept": "Nash candidate (verified by gain)",
+    "gain": 1.1850122799694773e-08,
+    "nash_conv": 4.7400491198779093e-08,
+    "support": [
+     "psro02",
+     "psro03"
+    ],
+    "entropy": 0.6585308049514296
+   },
+   {
+    "method": "regret_matching",
+    "concept": "CCE (coarse correlated equilibrium of the n-player game, via average regret); the average strategy's own Nash gain is NOT guaranteed small",
+    "gain": 8.319288727354213e-06,
+    "nash_conv": 3.327715490941685e-05,
+    "support": [
+     "psro02",
+     "psro03"
+    ],
+    "entropy": 0.6591041722373966
+   },
+   {
+    "method": "nash_conv_minimizer",
+    "concept": "Nash candidate (verified by gain)",
+    "gain": 1.003530591958679e-12,
+    "nash_conv": 4.014122367834716e-12,
+    "support": [
+     "psro02",
+     "psro03"
+    ],
+    "entropy": 0.6585306803590368
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 1.912359159916832e-14,
+    "nash_conv": 7.649436639667329e-14,
+    "support": [
+     "psro02",
+     "psro03"
+    ],
+    "entropy": 0.6585306803650917
+   }
+  ],
+  "accounting": {
+   "games": 25152,
+   "stalled": 0
+  }
+ },
+ "5": {
+  "sigma": [
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.9094984106780457,
+   0.09050158932195432
+  ],
+  "solver": "support_enumeration",
+  "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+  "is_nash": true,
+  "gain": 1.665986792964702e-11,
+  "nash_conv": 8.32993396482351e-11,
+  "verified_gain": 1.6659923440798252e-11,
+  "verify_method": "enumerate",
+  "entropy": 0.303696784267112,
+  "bootstrap": {
+   "mean": 0.012495156065059519,
+   "p95": 0.04197774783634116,
+   "reps": 200
+  },
+  "value": 0.19999999738268928,
+  "values": {
+   "run2": 0.05220353153151473,
+   "magnate": 0.12953808251323914,
+   "control": 0.12236712066513855,
+   "defense": 0.08956450437096765,
+   "exploit_run2": 0.15432116272805,
+   "merchant": 0.0,
+   "psro02": 0.1999999973810315,
+   "psro03": 0.19999999739934915
+  },
+  "solvers": [
+   {
+    "method": "replicator",
+    "concept": "Nash candidate (verified by gain)",
+    "gain": 7.960987452593216e-09,
+    "nash_conv": 3.980493726296608e-08,
+    "support": [
+     "psro03"
+    ],
+    "entropy": 1.96888765279027e-06
+   },
+   {
+    "method": "regret_matching",
+    "concept": "CCE (coarse correlated equilibrium of the n-player game, via average regret); the average strategy's own Nash gain is NOT guaranteed small",
+    "gain": 1.2364918834412153e-05,
+    "nash_conv": 6.182459417206077e-05,
+    "support": [
+     "psro03"
+    ],
+    "entropy": 0.0015887075744675165
+   },
+   {
+    "method": "nash_conv_minimizer",
+    "concept": "Nash candidate (verified by gain)",
+    "gain": 0.0,
+    "nash_conv": 0.0,
+    "support": [
+     "psro02"
+    ],
+    "entropy": -0.0
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 0.0,
+    "nash_conv": 0.0,
+    "support": [
+     "psro02"
+    ],
+    "entropy": -0.0
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 0.0,
+    "nash_conv": 0.0,
+    "support": [
+     "psro03"
+    ],
+    "entropy": -0.0
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 1.665986792964702e-11,
+    "nash_conv": 8.32993396482351e-11,
+    "support": [
+     "psro02",
+     "psro03"
+    ],
+    "entropy": 0.303696784267112
+   }
+  ],
+  "accounting": {
+   "games": 73440,
+   "stalled": 0
+  }
+ }
+}

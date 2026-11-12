@@ -22,6 +22,7 @@ logs/
 wandb/
 *.pt
 !training/anchors/*.pt
+!populations/**/*.pt
 *.pth
 *.ckpt
 *.safetensors

@@ -1,0 +1,10 @@
+  2048/18000 games, 55/s, stalled so far 0
+  4096/18000 games, 56/s, stalled so far 0
+  6144/18000 games, 45/s, stalled so far 2
+  8192/18000 games, 40/s, stalled so far 2
+  10240/18000 games, 38/s, stalled so far 2
+  12288/18000 games, 34/s, stalled so far 3
+  14337/18000 games, 31/s, stalled so far 3
+  16385/18000 games, 30/s, stalled so far 3
+  18000/18000 games, 29/s, stalled so far 3
+wrote reports/psro/final_br/holdout_final_sigma.json and reports/psro/final_br/holdout_final_sigma.md

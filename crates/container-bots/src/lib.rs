@@ -6,6 +6,7 @@
 use container_engine::action::Action;
 use container_engine::observation::Observation;
 
+pub mod consortium;
 pub mod features;
 pub mod heuristic;
 pub mod magnate;
@@ -38,7 +39,7 @@ pub struct OpponentInfo {
 }
 
 /// Every opponent that can be selected.
-pub const OPPONENTS: [OpponentInfo; 4] = [
+pub const OPPONENTS: [OpponentInfo; 5] = [
     OpponentInfo {
         id: random::ID,
         name: "Random",
@@ -63,6 +64,12 @@ pub const OPPONENTS: [OpponentInfo; 4] = [
         description: "A neural net trained by imitating Merchant, then by self-play against earlier versions of itself. It plays the action it rates best and never repeats itself in an identical position.",
         elo: 2280,
     },
+    OpponentInfo {
+        id: consortium::ID,
+        name: "Consortium",
+        description: "The last net of the population study, a best response trained against the strongest nets before it. It plays the action it rates best and never repeats itself in an identical position. About 100 ELO above Magnate when they share a table.",
+        elo: 2378,
+    },
 ];
 
 /// Builds the opponent with this identifier. A seed gives the same choices every time.
@@ -72,6 +79,7 @@ pub fn create(id: &str, seed: u64) -> Option<Box<dyn Opponent + Send>> {
         heuristic::ID => Some(Box::new(Heuristic::new(seed))),
         merchant::ID => Some(Box::new(Merchant::new(seed))),
         magnate::ID => Some(Box::new(magnate::new(seed))),
+        consortium::ID => Some(Box::new(consortium::new(seed))),
         _ => None,
     }
 }

@@ -1,0 +1,463 @@
+{
+ "iteration": 4,
+ "population": [
+  "run2",
+  "magnate",
+  "control",
+  "defense",
+  "exploit_run2",
+  "merchant",
+  "psro02",
+  "psro03"
+ ],
+ "init": "psro03",
+ "training": {
+  "minutes": 25.95,
+  "games": 70954,
+  "decisions": 13537135,
+  "utility_first": 0.2691636363636364,
+  "utility_last": 0.2903581818181818,
+  "curve": [
+   {
+    "minutes": 9.31,
+    "gain": [
+     0.04291979800900244,
+     -0.016057165420478612,
+     0.10028606070254073
+    ]
+   },
+   {
+    "minutes": 18.59,
+    "gain": [
+     0.030014812604205698,
+     -0.026462213274985845,
+     0.08504851433296025
+    ]
+   },
+   {
+    "minutes": 25.95,
+    "gain": [
+     0.027967872274329616,
+     -0.025935678266610657,
+     0.0855751594010428
+    ]
+   }
+  ]
+ },
+ "train_config": {
+  "utility": "canonical",
+  "gamma": 0.1,
+  "seed": 104,
+  "minutes": 25.0,
+  "lr": 0.0001,
+  "lr_decay": "linear",
+  "entropy": 0.01,
+  "init": "psro03",
+  "population": [
+   "run2",
+   "magnate",
+   "control",
+   "defense",
+   "exploit_run2",
+   "merchant",
+   "psro02",
+   "psro03"
+  ],
+  "players": [
+   3,
+   4,
+   5
+  ],
+  "length": "standard"
+ },
+ "meta": {
+  "3": {
+   "sigma": [
+    0.0,
+    0.15136823936627938,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.1143680917337082,
+    0.7342636689000124
+   ],
+   "solver": "nash_conv_minimizer",
+   "concept": "Nash candidate (verified by gain)",
+   "is_nash": true,
+   "gain": 0.0,
+   "nash_conv": 0.0,
+   "verified_gain": 0.0,
+   "verify_method": "enumerate",
+   "entropy": 0.7605819468226505,
+   "bootstrap": {
+    "mean": 0.023422657267997478,
+    "p95": 0.05999934628426743,
+    "reps": 200
+   },
+   "value": 0.3333331387494478,
+   "values": {
+    "run2": 0.16716564052395272,
+    "magnate": 0.3333331387494478,
+    "control": 0.20701048356492713,
+    "defense": 0.24889140334744497,
+    "exploit_run2": 0.16645590444201736,
+    "merchant": 0.0,
+    "psro02": 0.33333313874944775,
+    "psro03": 0.3333331387494478
+   },
+   "solvers": [
+    {
+     "method": "replicator",
+     "concept": "Nash candidate (verified by gain)",
+     "gain": 2.8377086014330644e-08,
+     "nash_conv": 8.513125804299193e-08,
+     "support": [
+      "magnate",
+      "psro02",
+      "psro03"
+     ],
+     "entropy": 0.7605816741347273
+    },
+    {
+     "method": "regret_matching",
+     "concept": "CCE (coarse correlated equilibrium of the n-player game, via average regret); the average strategy's own Nash gain is NOT guaranteed small",
+     "gain": 8.556700817674567e-06,
+     "nash_conv": 2.5670102453023702e-05,
+     "support": [
+      "magnate",
+      "psro02",
+      "psro03"
+     ],
+     "entropy": 0.7610786860906282
+    },
+    {
+     "method": "nash_conv_minimizer",
+     "concept": "Nash candidate (verified by gain)",
+     "gain": 0.0,
+     "nash_conv": 0.0,
+     "support": [
+      "magnate",
+      "psro02",
+      "psro03"
+     ],
+     "entropy": 0.7605819468226505
+    },
+    {
+     "method": "support_enumeration",
+     "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+     "gain": 8.348488567122558e-12,
+     "nash_conv": 2.5045465701367675e-11,
+     "support": [
+      "magnate",
+      "psro02",
+      "psro03"
+     ],
+     "entropy": 0.7605819471735273
+    }
+   ],
+   "accounting": {
+    "games": 7104,
+    "stalled": 1
+   }
+  },
+  "4": {
+   "sigma": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.3692040070504933,
+    0.6307959929495067
+   ],
+   "solver": "support_enumeration",
+   "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+   "is_nash": true,
+   "gain": 1.912359159916832e-14,
+   "nash_conv": 7.649436639667329e-14,
+   "verified_gain": 1.912359159916832e-14,
+   "verify_method": "enumerate",
+   "entropy": 0.6585306803650917,
+   "bootstrap": {
+    "mean": 0.013465900015228715,
+    "p95": 0.03532963566963398,
+    "reps": 200
+   },
+   "value": 0.24999999222408367,
+   "values": {
+    "run2": 0.055008293201676495,
+    "magnate": 0.18027802570138524,
+    "control": 0.12739534442737147,
+    "defense": 0.08462333188488616,
+    "exploit_run2": 0.10701639626948106,
+    "merchant": 0.0,
+    "psro02": 0.2499999922241028,
+    "psro03": 0.2499999922240725
+   },
+   "solvers": [
+    {
+     "method": "replicator",
+     "concept": "Nash candidate (verified by gain)",
+     "gain": 1.1850122799694773e-08,
+     "nash_conv": 4.7400491198779093e-08,
+     "support": [
+      "psro02",
+      "psro03"
+     ],
+     "entropy": 0.6585308049514296
+    },
+    {
+     "method": "regret_matching",
+     "concept": "CCE (coarse correlated equilibrium of the n-player game, via average regret); the average strategy's own Nash gain is NOT guaranteed small",
+     "gain": 8.319288727354213e-06,
+     "nash_conv": 3.327715490941685e-05,
+     "support": [
+      "psro02",
+      "psro03"
+     ],
+     "entropy": 0.6591041722373966
+    },
+    {
+     "method": "nash_conv_minimizer",
+     "concept": "Nash candidate (verified by gain)",
+     "gain": 1.003530591958679e-12,
+     "nash_conv": 4.014122367834716e-12,
+     "support": [
+      "psro02",
+      "psro03"
+     ],
+     "entropy": 0.6585306803590368
+    },
+    {
+     "method": "support_enumeration",
+     "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+     "gain": 1.912359159916832e-14,
+     "nash_conv": 7.649436639667329e-14,
+     "support": [
+      "psro02",
+      "psro03"
+     ],
+     "entropy": 0.6585306803650917
+    }
+   ],
+   "accounting": {
+    "games": 25152,
+    "stalled": 0
+   }
+  },
+  "5": {
+   "sigma": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.9094984106780457,
+    0.09050158932195432
+   ],
+   "solver": "support_enumeration",
+   "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+   "is_nash": true,
+   "gain": 1.665986792964702e-11,
+   "nash_conv": 8.32993396482351e-11,
+   "verified_gain": 1.6659923440798252e-11,
+   "verify_method": "enumerate",
+   "entropy": 0.303696784267112,
+   "bootstrap": {
+    "mean": 0.012495156065059519,
+    "p95": 0.04197774783634116,
+    "reps": 200
+   },
+   "value": 0.19999999738268928,
+   "values": {
+    "run2": 0.05220353153151473,
+    "magnate": 0.12953808251323914,
+    "control": 0.12236712066513855,
+    "defense": 0.08956450437096765,
+    "exploit_run2": 0.15432116272805,
+    "merchant": 0.0,
+    "psro02": 0.1999999973810315,
+    "psro03": 0.19999999739934915
+   },
+   "solvers": [
+    {
+     "method": "replicator",
+     "concept": "Nash candidate (verified by gain)",
+     "gain": 7.960987452593216e-09,
+     "nash_conv": 3.980493726296608e-08,
+     "support": [
+      "psro03"
+     ],
+     "entropy": 1.96888765279027e-06
+    },
+    {
+     "method": "regret_matching",
+     "concept": "CCE (coarse correlated equilibrium of the n-player game, via average regret); the average strategy's own Nash gain is NOT guaranteed small",
+     "gain": 1.2364918834412153e-05,
+     "nash_conv": 6.182459417206077e-05,
+     "support": [
+      "psro03"
+     ],
+     "entropy": 0.0015887075744675165
+    },
+    {
+     "method": "nash_conv_minimizer",
+     "concept": "Nash candidate (verified by gain)",
+     "gain": 0.0,
+     "nash_conv": 0.0,
+     "support": [
+      "psro02"
+     ],
+     "entropy": -0.0
+    },
+    {
+     "method": "support_enumeration",
+     "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+     "gain": 0.0,
+     "nash_conv": 0.0,
+     "support": [
+      "psro02"
+     ],
+     "entropy": -0.0
+    },
+    {
+     "method": "support_enumeration",
+     "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+     "gain": 0.0,
+     "nash_conv": 0.0,
+     "support": [
+      "psro03"
+     ],
+     "entropy": -0.0
+    },
+    {
+     "method": "support_enumeration",
+     "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+     "gain": 1.665986792964702e-11,
+     "nash_conv": 8.32993396482351e-11,
+     "support": [
+      "psro02",
+      "psro03"
+     ],
+     "entropy": 0.303696784267112
+    }
+   ],
+   "accounting": {
+    "games": 73440,
+    "stalled": 0
+   }
+  }
+ },
+ "decision": {
+  "accepted": false,
+  "mode": "sample",
+  "gain_by_mode": {
+   "sample": [
+    0.030041086633836343,
+    -0.0018842172380863845,
+    0.06344284225343311
+   ],
+   "guarded": [
+    0.02804108663383634,
+    -0.004777061642726105,
+    0.059620231281411556
+   ]
+  },
+  "gain": [
+   0.030041086633836343,
+   -0.0018842172380863845,
+   0.06344284225343311
+  ],
+  "nash_conv": [
+   0.11745550176477836,
+   0.001620989047675981,
+   0.24035205823630532
+  ],
+  "max_seat_gain": 0.08888969136342999,
+  "per_n": {
+   "3": {
+    "gain": [
+     0.03613549934661815,
+     -0.03488033363671899,
+     0.10794560678168824
+    ],
+    "nash_conv": [
+     0.10840649803985448,
+     -0.10464100091015692,
+     0.32383682034506456
+    ],
+    "sigma": [
+     0.3305311673200485,
+     0.29911976854362926,
+     0.36436056452992205
+    ],
+    "max_seat_gain": 0.08888969136342999,
+    "best_pure": [
+     "psro03",
+     0.021135499346618167
+    ]
+   },
+   "4": {
+    "gain": [
+     0.025978795519973882,
+     -0.023622936153792653,
+     0.0773848037103372
+    ],
+    "nash_conv": [
+     0.10391518207989553,
+     -0.09449174461517061,
+     0.3095392148413488
+    ],
+    "sigma": [
+     0.26652120448002614,
+     0.23876114584679992,
+     0.29376997292450335
+    ],
+    "max_seat_gain": 0.07430448084605919,
+    "best_pure": [
+     "psro03",
+     0.02722879551997388
+    ]
+   },
+   "5": {
+    "gain": [
+     0.028008965034917,
+     -0.012719754322990053,
+     0.07047684688482594
+    ],
+    "nash_conv": [
+     0.14004482517458505,
+     -0.0635987716149503,
+     0.35238423442412964
+    ],
+    "sigma": [
+     0.19599103496508302,
+     0.17144331878581984,
+     0.22209491460585154
+    ],
+    "max_seat_gain": 0.08275987285424363,
+    "best_pure": [
+     "psro03",
+     0.020008965034917007
+    ]
+   }
+  },
+  "rule": "accept when the lower 95% bound of the mean gain over player counts, in the better of the modes sample, guarded, is above 0.0"
+ },
+ "new_member": null,
+ "generalisation": null,
+ "accounting": {
+  "games": 12000,
+  "completed": 12000,
+  "stalled": 0,
+  "stall_rate": 0.0,
+  "horizon": 2500
+ },
+ "study": "reports/psro/iter_04/study.json",
+ "results": "populations/psro/results.json",
+ "git": "2552fa3f751effecd0d7fb11e097fa2e67269a99+dirty-79634ab95aa6",
+ "finished": "2026-11-11 19:09:40"
+}

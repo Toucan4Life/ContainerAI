@@ -54,7 +54,8 @@ def evaluate(env: BatchEnv, net, device: str, rng, games: int, ladder: dict[str,
     """Plays `net` greedily at tables drawn from the whole ladder and rates it against it.
 
     Every table seats the net with two to four opponents, each a scripted bot or an anchor net
-    picked uniformly. Games that stall are dropped.
+    picked uniformly. Games that stall are left out of the rating; `completed`, `stalled` and
+    `stall_rate` say how many that was (`games` is the number requested).
     """
     nets = nets if nets is not None else {}
     names = [n for n in ladder if n in SCRIPTED or n in nets]
@@ -87,8 +88,16 @@ def evaluate(env: BatchEnv, net, device: str, rng, games: int, ladder: dict[str,
             results.append((name, out))
             per_opp.setdefault(name, []).append(out)
     elo = rate_against({k: v for k, v in ladder.items() if k in names}, results)
-    return {"elo": round(elo, 1), "games": games,
+    return {"elo": round(elo, 1), "games": games, **stall_accounting(status),
             **{f"vs_{k}": round(float(np.mean(v)), 3) for k, v in per_opp.items()}}
+
+
+def stall_accounting(status) -> dict:
+    """How many of the games played reached their end; the rest hit the horizon and are not rated."""
+    status = np.asarray(status)
+    stalled = int((status != DONE).sum())
+    return {"completed": len(status) - stalled, "stalled": stalled,
+            "stall_rate": round(stalled / max(len(status), 1), 4)}
 
 
 def exploit_table(rng, target_slot: int):
@@ -117,6 +126,7 @@ def exploit_stats(tables, status, scores, target: str, rating: float, games: int
         return float(np.mean(xs)) if len(xs) else 0.0
 
     return {"elo": round(rate_against({target: rating}, [(target, d) for d in duels]), 1), "games": games,
+            **stall_accounting(status),
             f"vs_{target}": round(mean(duels), 3), "win_rate": round(mean(wins), 3),
             "fair_rate": round(mean(fair), 3), "margin": round(mean(margins), 2)}
 
@@ -130,7 +140,8 @@ def evaluate_exploit(env: BatchEnv, net, target_net, device: str, rng, games: in
     `elo` is the anchor's `rating` plus the gap the results imply, so it only means something next to
     that anchor. `win_rate` is the share of games `net` wins (a shared first place splits the win);
     equal players would win `fair_rate`. `margin` is the score points `net` finishes ahead of the
-    average opponent. Games that stall are dropped.
+    average opponent. Games that stall are left out of every statistic but counted in `stalled`
+    (`completed` and `stall_rate` as well; `games` is the number requested).
     """
     roller = Roller(env, lambda: exploit_table(rng, 1), device, rng, limit=games, record=False)
     _, status, _, scores, tables = roller.collect({0: net, 1: target_net}, mode="sample",
@@ -139,7 +150,8 @@ def evaluate_exploit(env: BatchEnv, net, target_net, device: str, rng, games: in
     return exploit_stats(tables, status, scores, target, rating, games)
 
 
-def rate(checkpoint: str, games: int, exclude: str | None = None, seed: int = 7, threads: int = 12) -> dict:
+def rate(checkpoint: str, games: int, exclude: str | None = None, seed: int = 7, threads: int = 12,
+         no_call_bank: bool = False, buy_at_harbor: bool = False) -> dict:
     """Rates a checkpoint against the current ladder, leaving out the anchor `exclude`. Stores nothing."""
     device = "cuda" if torch.cuda.is_available() else "cpu"
     ladder = load_ladder()
@@ -147,6 +159,10 @@ def rate(checkpoint: str, games: int, exclude: str | None = None, seed: int = 7,
     nets = load_nets(device, ladder)
     net = load_checkpoint(checkpoint, device).eval()
     env = BatchEnv(256, threads, pinned=device == "cuda")
+    if no_call_bank:
+        env.ban_bank(LEARNER)
+    if buy_at_harbor:
+        env.require_harbor_purchase(LEARNER)
     return evaluate(env, net, device, np.random.default_rng(seed), games, ladder, nets)
 
 
@@ -188,6 +204,8 @@ def main() -> None:
     r.add_argument("checkpoint")
     r.add_argument("--games", type=int, default=3000)
     r.add_argument("--seed", type=int, default=7)
+    r.add_argument("--no-call-bank", action="store_true", help="the rated net may never call the Bank")
+    r.add_argument("--buy-at-harbor", action="store_true", help="the rated net must buy when it sails to a harbor")
     d = sub.add_parser("duel")
     d.add_argument("checkpoint")
     d.add_argument("target")
@@ -199,7 +217,8 @@ def main() -> None:
     if args.cmd == "add":
         print(add(args.name, args.checkpoint, args.games))
     elif args.cmd == "rate":
-        print(rate(args.checkpoint, args.games, seed=args.seed))
+        print(rate(args.checkpoint, args.games, seed=args.seed, no_call_bank=args.no_call_bank,
+                   buy_at_harbor=args.buy_at_harbor))
     elif args.cmd == "duel":
         print(duel(args.checkpoint, args.target, args.games, args.sample_target, seed=args.seed))
     for n, v in sorted(load_ladder().items(), key=lambda kv: kv[1]):

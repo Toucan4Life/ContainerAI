@@ -1,0 +1,322 @@
+{
+  "header": {
+    "state_dim": 520,
+    "action_dim": 52,
+    "max_actions": 48,
+    "features_rs_sha256": "b9d8e1946cf5060029b6e0da321d6c2f7645b47bc175aa33d5ce77188a4d34d0",
+    "git": "2552fa3f751effecd0d7fb11e097fa2e67269a99+dirty"
+  },
+  "members": [
+    {
+      "name": "run2",
+      "checkpoint": "populations/psro/run2.pt",
+      "scripted": null,
+      "sha256": "c965d6a6520afacaae41991ec17f8f0528c3a10aba4989b6091a52c5628e0374",
+      "parent": "run1",
+      "objective": "PPO league continuation of run1 against its past versions and scripted bots (30 min)",
+      "seed": 2,
+      "config": {
+        "name": "run2",
+        "budget_minutes": 30.0,
+        "hidden": 256,
+        "envs": 256,
+        "threads": 12,
+        "seed": 2,
+        "init": "runs/run1/final.pt",
+        "no_imitation": true,
+        "imitation_share": 0.17,
+        "eval_seconds": 90.0,
+        "runs": "runs",
+        "lr": 0.0003,
+        "device": "cuda"
+      },
+      "notes": "source: runs/run2/final.pt"
+    },
+    {
+      "name": "defense_run2_vs_exploiter_30m",
+      "checkpoint": "populations/psro/defense_run2_vs_exploiter_30m.pt",
+      "scripted": null,
+      "sha256": "0261429a8f3df1be00f46ca052e5e26e56bfab4742311bd2cf77d3c1d9235f5b",
+      "parent": "run2",
+      "objective": "PPO league continuation of run2 with exploit_run2 added to the field (30 min). The net of Magnate",
+      "seed": 4,
+      "config": {
+        "name": "defense_run2_vs_exploiter_30m",
+        "budget_minutes": 30.0,
+        "hidden": 256,
+        "envs": 256,
+        "threads": 12,
+        "seed": 4,
+        "init": "runs/run2/final.pt",
+        "no_imitation": true,
+        "imitation_share": 0.17,
+        "eval_seconds": 90.0,
+        "runs": "runs",
+        "lr": 0.0003,
+        "exploit": null,
+        "target_mode": "greedy",
+        "device": "cuda"
+      },
+      "notes": "source: runs/defense_run2_vs_exploiter_30m/final.pt; weights.bin sha256 c460db4730ab2ee6 equals the built-in Magnate (crates/container-bots/weights/magnate.bin)"
+    },
+    {
+      "name": "control_run2_30m",
+      "checkpoint": "populations/psro/control_run2_30m.pt",
+      "scripted": null,
+      "sha256": "6fe0b5d09bf12c4901e76eec44688ae29df985811bf72228f1a84f8d47934820",
+      "parent": "run2",
+      "objective": "PPO league continuation of run2; field: run1, run2, scripted bots (30 min). Control for the defense run",
+      "seed": 4,
+      "config": {
+        "name": "control_run2_30m",
+        "budget_minutes": 30.0,
+        "hidden": 256,
+        "envs": 256,
+        "threads": 12,
+        "seed": 4,
+        "init": "runs/run2/final.pt",
+        "no_imitation": true,
+        "imitation_share": 0.17,
+        "eval_seconds": 90.0,
+        "runs": "runs",
+        "lr": 0.0003,
+        "exploit": null,
+        "target_mode": "greedy",
+        "device": "cuda"
+      },
+      "notes": "source: runs/control_run2_30m/final.pt"
+    },
+    {
+      "name": "exploit_run2",
+      "checkpoint": "populations/psro/exploit_run2.pt",
+      "scripted": null,
+      "sha256": "c6b233c0bcd2a3809a37d4355823d1c3160b86c24aed92a33ee8ef277be4af2d",
+      "parent": "run2",
+      "objective": "PPO best-response exploiter of greedy run2: one learner seat, every other seat plays run2 (30 min)",
+      "seed": 3,
+      "config": {
+        "name": "exploit_run2",
+        "budget_minutes": 30.0,
+        "hidden": 256,
+        "envs": 256,
+        "threads": 12,
+        "seed": 3,
+        "init": "/workspaces/ContainerAI/training/anchors/run2.pt",
+        "no_imitation": true,
+        "imitation_share": 0.17,
+        "eval_seconds": 90.0,
+        "runs": "runs",
+        "lr": 0.0003,
+        "exploit": "run2",
+        "target_mode": "greedy",
+        "device": "cuda"
+      },
+      "notes": "source: runs/exploit_run2/final.pt"
+    },
+    {
+      "name": "merchant",
+      "checkpoint": null,
+      "scripted": -3,
+      "sha256": null,
+      "parent": null,
+      "objective": "scripted heuristic of container-bots (merchant.rs)",
+      "seed": null,
+      "config": {},
+      "notes": "tuned in self-play by crates/container-arena/src/bin/tune.rs"
+    },
+    {
+      "name": "psro02",
+      "checkpoint": "populations/psro/psro02.pt",
+      "scripted": null,
+      "sha256": "24c98d63d07372d8f35aacdea48ee26345aae4ba5158433c45f869706ffafb5b",
+      "parent": "defense_run2_vs_exploiter_30m",
+      "objective": "PPO best response to the meta-game solution of iteration 2 (utility canonical, exploration gamma 0.1)",
+      "seed": 102,
+      "config": {
+        "utility": "canonical",
+        "gamma": 0.1,
+        "seed": 102,
+        "minutes": 25.0,
+        "lr": 0.0001,
+        "lr_decay": "linear",
+        "entropy": 0.01,
+        "init": "magnate",
+        "population": [
+          "run2",
+          "magnate",
+          "control",
+          "defense",
+          "exploit_run2",
+          "merchant"
+        ],
+        "players": [
+          3,
+          4,
+          5
+        ],
+        "length": "standard"
+      },
+      "notes": "admitted in guarded mode; mean gain over sigma on dev seeds +0.098 [+0.070, +0.126]; by mode: sample +0.057, guarded +0.098"
+    },
+    {
+      "name": "psro03",
+      "checkpoint": "populations/psro/psro03.pt",
+      "scripted": null,
+      "sha256": "a6d8677a72c3d17c5f9d7fe7ce1d9c8b8019729ac94d9c35eafa855548350010",
+      "parent": "psro02",
+      "objective": "PPO best response to the meta-game solution of iteration 3 (utility canonical, exploration gamma 0.1)",
+      "seed": 103,
+      "config": {
+        "utility": "canonical",
+        "gamma": 0.1,
+        "seed": 103,
+        "minutes": 25.0,
+        "lr": 0.0001,
+        "lr_decay": "linear",
+        "entropy": 0.01,
+        "init": "psro02",
+        "population": [
+          "run2",
+          "magnate",
+          "control",
+          "defense",
+          "exploit_run2",
+          "merchant",
+          "psro02"
+        ],
+        "players": [
+          3,
+          4,
+          5
+        ],
+        "length": "standard"
+      },
+      "notes": "admitted in guarded mode; mean gain over sigma on dev seeds +0.032 [+0.005, +0.059]; by mode: sample +0.008, guarded +0.032"
+    },
+    {
+      "name": "psro05",
+      "checkpoint": "populations/psro/psro05.pt",
+      "scripted": null,
+      "sha256": "0af78fb42e0235f859a71aef6804b50d16c5d8a54c73bd6df2c8a35fa41eec85",
+      "parent": "psro03",
+      "objective": "PPO best response to the meta-game solution of iteration 5 (utility canonical, exploration gamma 0.1)",
+      "seed": 105,
+      "config": {
+        "utility": "canonical",
+        "gamma": 0.1,
+        "seed": 105,
+        "minutes": 25.0,
+        "lr": 0.0001,
+        "lr_decay": "linear",
+        "entropy": 0.01,
+        "init": "psro03",
+        "population": [
+          "run2",
+          "magnate",
+          "control",
+          "defense",
+          "exploit_run2",
+          "merchant",
+          "psro02",
+          "psro03"
+        ],
+        "players": [
+          3,
+          4,
+          5
+        ],
+        "length": "standard"
+      },
+      "notes": "admitted in guarded mode; mean gain over sigma on dev seeds +0.052 [+0.024, +0.080]; by mode: sample +0.022, guarded +0.052"
+    },
+    {
+      "name": "psro08",
+      "checkpoint": "populations/psro/psro08.pt",
+      "scripted": null,
+      "sha256": "a9f91160bb9b08b5a3cd0cf74efec64a067e12bb076d83227e99f176fc9a3635",
+      "parent": "psro05",
+      "objective": "PPO best response to reports/psro/final_br/profile_train.json (utility canonical, exploration gamma 0.1), trained outside the loop",
+      "seed": 108,
+      "config": {
+        "utility": "canonical",
+        "gamma": 0.1,
+        "seed": 108,
+        "minutes": 50.0,
+        "lr": 0.0001,
+        "lr_decay": "linear",
+        "entropy": 0.01,
+        "init": "psro05",
+        "population": [
+          "run2",
+          "magnate",
+          "control",
+          "defense",
+          "exploit_run2",
+          "merchant",
+          "psro02",
+          "psro03",
+          "psro05"
+        ],
+        "players": [
+          3,
+          4,
+          5
+        ],
+        "length": "standard"
+      },
+      "notes": "admitted in guarded mode; mean gain over sigma on dev seeds +0.033 [+0.005, +0.060]; by mode: sample +0.010, guarded +0.033; on 300 holdout seeds per player count (offset 1000) +0.022 [+0.008, +0.035]"
+    }
+  ],
+  "strategies": [
+    {
+      "name": "run2",
+      "member": "run2",
+      "mode": "sample"
+    },
+    {
+      "name": "magnate",
+      "member": "defense_run2_vs_exploiter_30m",
+      "mode": "guarded"
+    },
+    {
+      "name": "control",
+      "member": "control_run2_30m",
+      "mode": "sample"
+    },
+    {
+      "name": "defense",
+      "member": "defense_run2_vs_exploiter_30m",
+      "mode": "sample"
+    },
+    {
+      "name": "exploit_run2",
+      "member": "exploit_run2",
+      "mode": "sample"
+    },
+    {
+      "name": "merchant",
+      "member": "merchant",
+      "mode": "sample"
+    },
+    {
+      "name": "psro02",
+      "member": "psro02",
+      "mode": "guarded"
+    },
+    {
+      "name": "psro03",
+      "member": "psro03",
+      "mode": "guarded"
+    },
+    {
+      "name": "psro05",
+      "member": "psro05",
+      "mode": "guarded"
+    },
+    {
+      "name": "psro08",
+      "member": "psro08",
+      "mode": "guarded"
+    }
+  ]
+}

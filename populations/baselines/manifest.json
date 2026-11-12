@@ -1,0 +1,190 @@
+{
+  "header": {
+    "state_dim": 520,
+    "action_dim": 52,
+    "max_actions": 48,
+    "features_rs_sha256": "b9d8e1946cf5060029b6e0da321d6c2f7645b47bc175aa33d5ce77188a4d34d0",
+    "git": "2552fa3f751effecd0d7fb11e097fa2e67269a99+dirty"
+  },
+  "members": [
+    {
+      "name": "merchant",
+      "checkpoint": null,
+      "scripted": -3,
+      "sha256": null,
+      "parent": null,
+      "objective": "scripted heuristic of container-bots (merchant.rs)",
+      "seed": null,
+      "config": {},
+      "notes": "tuned in self-play by crates/container-arena/src/bin/tune.rs"
+    },
+    {
+      "name": "run1",
+      "checkpoint": "populations/baselines/run1.pt",
+      "scripted": null,
+      "sha256": "f26f9e295d510de82e8286e5c1c4f69ad6b7e30b05d655c36c72eb35c0dd2ee9",
+      "parent": null,
+      "objective": "imitation of Merchant, then PPO league self-play (60 min)",
+      "seed": 1,
+      "config": {
+        "name": "run1",
+        "budget_minutes": 60.0,
+        "hidden": 256,
+        "envs": 256,
+        "threads": 12,
+        "seed": 1,
+        "init": null,
+        "no_imitation": false,
+        "imitation_share": 0.17,
+        "eval_seconds": 90.0,
+        "runs": "runs",
+        "lr": 0.0003,
+        "device": "cuda"
+      },
+      "notes": "source: runs/run1/final.pt"
+    },
+    {
+      "name": "run2",
+      "checkpoint": "populations/baselines/run2.pt",
+      "scripted": null,
+      "sha256": "c965d6a6520afacaae41991ec17f8f0528c3a10aba4989b6091a52c5628e0374",
+      "parent": "run1",
+      "objective": "PPO league continuation of run1 against its past versions and scripted bots (30 min)",
+      "seed": 2,
+      "config": {
+        "name": "run2",
+        "budget_minutes": 30.0,
+        "hidden": 256,
+        "envs": 256,
+        "threads": 12,
+        "seed": 2,
+        "init": "runs/run1/final.pt",
+        "no_imitation": true,
+        "imitation_share": 0.17,
+        "eval_seconds": 90.0,
+        "runs": "runs",
+        "lr": 0.0003,
+        "device": "cuda"
+      },
+      "notes": "source: runs/run2/final.pt"
+    },
+    {
+      "name": "exploit_run2",
+      "checkpoint": "populations/baselines/exploit_run2.pt",
+      "scripted": null,
+      "sha256": "c6b233c0bcd2a3809a37d4355823d1c3160b86c24aed92a33ee8ef277be4af2d",
+      "parent": "run2",
+      "objective": "PPO best-response exploiter of greedy run2: one learner seat, every other seat plays run2 (30 min)",
+      "seed": 3,
+      "config": {
+        "name": "exploit_run2",
+        "budget_minutes": 30.0,
+        "hidden": 256,
+        "envs": 256,
+        "threads": 12,
+        "seed": 3,
+        "init": "/workspaces/ContainerAI/training/anchors/run2.pt",
+        "no_imitation": true,
+        "imitation_share": 0.17,
+        "eval_seconds": 90.0,
+        "runs": "runs",
+        "lr": 0.0003,
+        "exploit": "run2",
+        "target_mode": "greedy",
+        "device": "cuda"
+      },
+      "notes": "source: runs/exploit_run2/final.pt"
+    },
+    {
+      "name": "control_run2_30m",
+      "checkpoint": "populations/baselines/control_run2_30m.pt",
+      "scripted": null,
+      "sha256": "6fe0b5d09bf12c4901e76eec44688ae29df985811bf72228f1a84f8d47934820",
+      "parent": "run2",
+      "objective": "PPO league continuation of run2; field: run1, run2, scripted bots (30 min). Control for the defense run",
+      "seed": 4,
+      "config": {
+        "name": "control_run2_30m",
+        "budget_minutes": 30.0,
+        "hidden": 256,
+        "envs": 256,
+        "threads": 12,
+        "seed": 4,
+        "init": "runs/run2/final.pt",
+        "no_imitation": true,
+        "imitation_share": 0.17,
+        "eval_seconds": 90.0,
+        "runs": "runs",
+        "lr": 0.0003,
+        "exploit": null,
+        "target_mode": "greedy",
+        "device": "cuda"
+      },
+      "notes": "source: runs/control_run2_30m/final.pt"
+    },
+    {
+      "name": "defense_run2_vs_exploiter_30m",
+      "checkpoint": "populations/baselines/defense_run2_vs_exploiter_30m.pt",
+      "scripted": null,
+      "sha256": "0261429a8f3df1be00f46ca052e5e26e56bfab4742311bd2cf77d3c1d9235f5b",
+      "parent": "run2",
+      "objective": "PPO league continuation of run2 with exploit_run2 added to the field (30 min). The net of Magnate",
+      "seed": 4,
+      "config": {
+        "name": "defense_run2_vs_exploiter_30m",
+        "budget_minutes": 30.0,
+        "hidden": 256,
+        "envs": 256,
+        "threads": 12,
+        "seed": 4,
+        "init": "runs/run2/final.pt",
+        "no_imitation": true,
+        "imitation_share": 0.17,
+        "eval_seconds": 90.0,
+        "runs": "runs",
+        "lr": 0.0003,
+        "exploit": null,
+        "target_mode": "greedy",
+        "device": "cuda"
+      },
+      "notes": "source: runs/defense_run2_vs_exploiter_30m/final.pt; weights.bin sha256 c460db4730ab2ee6 equals the built-in Magnate (crates/container-bots/weights/magnate.bin)"
+    }
+  ],
+  "strategies": [
+    {
+      "name": "merchant",
+      "member": "merchant",
+      "mode": "sample"
+    },
+    {
+      "name": "run1",
+      "member": "run1",
+      "mode": "sample"
+    },
+    {
+      "name": "run2",
+      "member": "run2",
+      "mode": "sample"
+    },
+    {
+      "name": "exploit_run2",
+      "member": "exploit_run2",
+      "mode": "sample"
+    },
+    {
+      "name": "control",
+      "member": "control_run2_30m",
+      "mode": "sample"
+    },
+    {
+      "name": "defense",
+      "member": "defense_run2_vs_exploiter_30m",
+      "mode": "sample"
+    },
+    {
+      "name": "magnate",
+      "member": "defense_run2_vs_exploiter_30m",
+      "mode": "guarded"
+    }
+  ]
+}

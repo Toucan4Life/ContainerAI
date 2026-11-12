@@ -1,0 +1,5 @@
+  24000/48720 games (61/s overall), 0 stalled in this chunk
+  48000/48720 games (51/s overall), 1 stalled in this chunk
+  48720/48720 games (52/s overall), 0 stalled in this chunk
+48,720 games in 943.7s; {'games': 48720, 'completed': 48719, 'stalled': 1, 'stall_rate': 2.052545155993432e-05, 'horizon': 2500}
+wrote /workspaces/ContainerAI/reports/crossplay/refine_dev/payoffs.json and /workspaces/ContainerAI/reports/crossplay/refine_dev/report.md

@@ -264,6 +264,11 @@ function MainPanel({ snap, act }: Props) {
   const reprices = of(snap, "Reprice");
   const starts = of(snap, "StartAuction");
   const outbids = of(snap, "Outbid");
+  const bankBlocked = snap.turn.wonAuction
+    ? "You won a Bank auction this turn, so the Bank can't be called"
+    : snap.turn.bankCalled
+      ? "The Bank was already called this turn"
+      : "No Bank lot to bid on";
   const me = snap.players[snap.viewer];
   const ownedFactories = me.factories.filter(Boolean).length;
 
@@ -405,7 +410,7 @@ function MainPanel({ snap, act }: Props) {
       label: "Call bank",
       icon: <Gavel size={15} />,
       count: starts.length + outbids.length,
-      blocked: "No Bank lot to bid on",
+      blocked: bankBlocked,
       options: (
         <>
           {outbids.length > 0 &&

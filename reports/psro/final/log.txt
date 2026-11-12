@@ -1,0 +1,27 @@
+$ /workspaces/ContainerAI/.venv/bin/python -m training.br eval --population populations/psro/manifest.json --profile @/workspaces/ContainerAI/reports/psro/iter_07/profile_eval.json --players 3,4,5 --length standard --block holdout --seeds 150 --seed-offset 200 --envs 256 --out /workspaces/ContainerAI/reports/psro/final/holdout_sigma_last --title PSRO, holdout study of the meta-strategy that iteration 7 attacked --candidates iter01=/workspaces/ContainerAI/runs/psro/iter_01/final.pt,iter04=/workspaces/ContainerAI/runs/psro/iter_04/final.pt,iter06=/workspaces/ContainerAI/runs/psro/iter_06/final.pt,iter07=/workspaces/ContainerAI/runs/psro/iter_07/final.pt --modes sample,guarded --all-focals
+  2050/30600 games, 36/s, stalled so far 0
+  4098/30600 games, 38/s, stalled so far 2
+  6146/30600 games, 37/s, stalled so far 2
+  8195/30600 games, 36/s, stalled so far 3
+  10244/30600 games, 32/s, stalled so far 3
+  12292/30600 games, 30/s, stalled so far 3
+  14340/30600 games, 29/s, stalled so far 3
+  16388/30600 games, 28/s, stalled so far 3
+  18436/30600 games, 27/s, stalled so far 3
+  20484/30600 games, 26/s, stalled so far 3
+  22532/30600 games, 24/s, stalled so far 3
+  24580/30600 games, 22/s, stalled so far 3
+  26628/30600 games, 20/s, stalled so far 3
+  28676/30600 games, 18/s, stalled so far 3
+  30600/30600 games, 17/s, stalled so far 3
+wrote /workspaces/ContainerAI/reports/psro/final/holdout_sigma_last.json and /workspaces/ContainerAI/reports/psro/final/holdout_sigma_last.md
+$ /workspaces/ContainerAI/.venv/bin/python -m training.br eval --population populations/psro/manifest.json --profile @/workspaces/ContainerAI/reports/psro/final/profile_final.json --players 3,4,5 --length standard --block holdout --seeds 150 --seed-offset 350 --envs 256 --out /workspaces/ContainerAI/reports/psro/final/holdout_sigma_final --title PSRO, holdout study of the solution of the final restricted game --all-focals
+  2048/16200 games, 39/s, stalled so far 0
+  4096/16200 games, 49/s, stalled so far 1
+  6144/16200 games, 46/s, stalled so far 1
+  8192/16200 games, 45/s, stalled so far 1
+  10240/16200 games, 42/s, stalled so far 1
+  12288/16200 games, 39/s, stalled so far 1
+  14336/16200 games, 38/s, stalled so far 1
+  16200/16200 games, 37/s, stalled so far 1
+wrote /workspaces/ContainerAI/reports/psro/final/holdout_sigma_final.json and /workspaces/ContainerAI/reports/psro/final/holdout_sigma_final.md

@@ -1,0 +1,14 @@
+$ /workspaces/ContainerAI/.venv/bin/python -m training.br train --population populations/psro/manifest.json --profile @/workspaces/ContainerAI/reports/psro/iter_07/profile_train.json --players 3,4,5 --length standard --name iter_07 --init /workspaces/ContainerAI/populations/psro/psro03.pt --budget-minutes 25.0 --utility canonical --seed 107 --lr 0.0001 --lr-decay linear --entropy 0.01 --envs 256 --runs runs/psro --eval-minutes 8.4 --eval-seeds 25
+[   575s] ckpt_000.pt: gain over sigma -0.003 [-0.055, +0.051] (dev, 25 seeds)
+[  1147s] ckpt_001.pt: gain over sigma +0.021 [-0.034, +0.076] (dev, 25 seeds)
+[  1576s] final.pt: gain over sigma +0.046 [-0.005, +0.098] (dev, 25 seeds)
+finished: 62,255 games in 26.26 min
+$ /workspaces/ContainerAI/.venv/bin/python -m training.br eval --population populations/psro/manifest.json --profile @/workspaces/ContainerAI/reports/psro/iter_07/profile_eval.json --players 3,4,5 --length standard --candidates psro07=/workspaces/ContainerAI/runs/psro/iter_07/final.pt --modes sample,guarded --block dev --seeds 100 --seed-offset 1600 --envs 256 --out /workspaces/ContainerAI/reports/psro/iter_07/study --title PSRO iteration 7: deviation study of the new response
+  2048/13200 games, 57/s, stalled so far 1
+  4096/13200 games, 51/s, stalled so far 1
+  6144/13200 games, 45/s, stalled so far 1
+  8192/13200 games, 41/s, stalled so far 1
+  10240/13200 games, 37/s, stalled so far 1
+  12288/13200 games, 34/s, stalled so far 1
+  13200/13200 games, 34/s, stalled so far 1
+wrote /workspaces/ContainerAI/reports/psro/iter_07/study.json and /workspaces/ContainerAI/reports/psro/iter_07/study.md

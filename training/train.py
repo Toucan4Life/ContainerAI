@@ -192,6 +192,12 @@ def main() -> None:
                          "every other seat plays the anchor (starts from its weights, skips imitation)")
     ap.add_argument("--target-mode", choices=["greedy", "sample"], default="greedy",
                     help="how the exploited anchor plays in training; ladder ratings are greedy")
+    ap.add_argument("--no-call-bank", action="store_true",
+                    help="the learner may never call the Bank (start or outbid an auction); "
+                         "opponents still do, and evaluations apply the same ban")
+    ap.add_argument("--buy-at-harbor", action="store_true",
+                    help="the learner must buy something whenever it sails to a harbor: it may only sail "
+                         "to one where something can be bought and may not decline; evaluations too")
     args = ap.parse_args()
     if args.exploit:
         if args.exploit not in anchor_lib.net_names():
@@ -216,6 +222,13 @@ def main() -> None:
     print(f"ladder: {anchors}  (net anchors: {list(anchor_nets)})", flush=True)
     env = BatchEnv(args.envs, args.threads, pinned=device == "cuda")
     eval_env = BatchEnv(256, args.threads, pinned=device == "cuda")  # evaluation must not disturb the games carried over in `env`
+
+    if args.no_call_bank:
+        env.ban_bank(LEARNER)
+        eval_env.ban_bank(LEARNER)
+    if args.buy_at_harbor:
+        env.require_harbor_purchase(LEARNER)
+        eval_env.require_harbor_purchase(LEARNER)
 
     net = PolicyNet(env.state_dim, env.action_dim, args.hidden).to(device)
     if args.init:

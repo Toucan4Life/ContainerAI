@@ -293,7 +293,40 @@ impl Session {
         } else if self.game.state.active_player != before.state.active_player {
             self.turns += 1;
         }
+        self.log_won_auctions(&before);
         Ok(())
+    }
+
+    /// An auction is won when its holder's turn begins and the interest is settled, with no action of
+    /// their own. Without an entry the lot would just appear in their holding area or hand.
+    fn log_won_auctions(&mut self, before: &Game) {
+        let winner = self.game.state.active_player;
+        if !self.game.turn.won_auction {
+            return;
+        }
+        for kind in AuctionKind::ALL {
+            let Some(auction) = before.state.bank.auctions[kind].filter(|a| a.holder == winner) else {
+                continue;
+            };
+            if self.game.state.bank.auctions[kind].is_some() {
+                continue;
+            }
+            let who = self.name(winner).to_string();
+            let lot = LOT_NUMERALS.get(auction.lot).copied().unwrap_or("?");
+            let text = match kind {
+                AuctionKind::ContainerLot => {
+                    let won = before.state.bank.container_lots[auction.lot];
+                    let icons: String = won.iter_nonzero().map(|(c, n)| icons(c, usize::from(n))).collect();
+                    format!("{who} wins the container auction on lot {lot} for ${}: {icons}", auction.bid.value())
+                }
+                AuctionKind::CashLot => format!(
+                    "{who} wins the cash auction on lot {lot} for {} containers and receives ${}",
+                    auction.bid.value(),
+                    before.state.bank.cash_lots[auction.lot],
+                ),
+            };
+            self.say(Some(winner), text, Vec::new());
+        }
     }
 
     /// Once a produce or purchase is over, rewrite its log entry with what was produced or bought.

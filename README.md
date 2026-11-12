@@ -82,7 +82,7 @@ Unoptimised, a net's decision is tens of times slower than in release (about 0.6
 cargo run --release -p container-arena -- --bots random,simple,merchant --games 2000 --players 3,4,5 --out games.jsonl
 ```
 
-Because Container is a multiplayer game, ratings come from a Bradley-Terry fit over every pairing at every table (`training/elo.py`), anchored at Random = 0, with bootstrap confidence intervals. A rating depends on the field it was measured against, so the ladder anchors are rated at mixed tables of Random, Simple and Merchant. A game that stalls (the engine has no anti-stall rule) has no result, so the Rust arena abandons it after 50,000 actions and the Python evaluations (`anchors rate`, `duel`, the trainer's final evaluation) drop it. Neither counts it as a loss. A net that stalls often is therefore not penalised in its ELO, and no evaluation reports a stall count (see [Interpreting evaluations](#interpreting-evaluations-and-planning-experiments)).
+Because Container is a multiplayer game, ratings come from a Bradley-Terry fit over every pairing at every table (`training/elo.py`), anchored at Random = 0, with bootstrap confidence intervals. A rating depends on the field it was measured against, so the ladder anchors are rated at mixed tables of Random, Simple and Merchant. A game that stalls (the engine has no anti-stall rule) has no result to rate. The Rust arena stops it after `STALL_HORIZON` (2,500 actions; `--horizon` changes it) and writes it with `"stalled":true` instead of dropping it. The Python evaluations (`anchors rate`, `duel`, the trainer's final evaluation) leave it out of the rating and report `completed`, `stalled` and `stall_rate` beside it. The rating still never counts a stall as a loss, so a net that stalls often is not penalised in its ELO: read the stall columns, or the utility of [Empirical game-theoretic evaluation](#empirical-game-theoretic-evaluation), which pays nothing for a stalled game.
 
 ## Training
 
@@ -110,7 +110,7 @@ The scripted bots stop measuring a strong net: beating Merchant 97% of the time 
 
 Evaluation seats the net with two to four opponents drawn from the scripted bots and every anchor (Merchant is always in the field) and rates it by maximum likelihood against their ratings. A run started afterwards also meets the anchors as permanent league opponents. Re-adding a name replaces it and re-rates it against the others; the other anchors are not refitted, so add them in order of strength.
 
-A game that stalls (the engine has no anti-stall rule; the env ends one after 2500 actions) counts as a loss for every seat (reward 0) instead of being dropped, so the policy learns to finish games. `stalled` is logged per iteration and charted. This applies to training only. The evaluations in `training/anchors.py` (`anchors rate`, `anchors duel` and the trainer's checkpoint evaluations) drop stalled games instead, so a stall never lowers a rating.
+A game that stalls (the engine has no anti-stall rule; the env ends one after 2500 actions) counts as a loss for every seat (reward 0) instead of being dropped, so the policy learns to finish games. `stalled` is logged per iteration and charted. This applies to training only. The evaluations in `training/anchors.py` (`anchors rate`, `anchors duel` and the trainer's checkpoint evaluations) leave stalled games out of the rating instead, so a stall never lowers a rating, but they report how many it was (`completed`, `stalled`, `stall_rate`; `games` is the number requested).
 
 ### Exploiters
 
@@ -259,8 +259,9 @@ stored decisions to accumulate on the GPU.
 
 The training environment now declares a game stalled after 2,500 actions. Every seat receives
 reward 0, rather than the game being dropped. `stalled` is logged per iteration and shown in the
-dashboard. In the post-fix smoke test and the completed `run1`/`run2` runs, stalls stayed at
-approximately zero. This is a training safeguard, not an engine rule change; normal UI games
+dashboard. In the post-fix smoke test stalls stayed at approximately zero; over the completed runs
+0.07-1.7% of tables stalled, and 2.5-11% in the harbor-rule runs (rates and cost in "Restricted
+learners" below). This is a training safeguard, not an engine rule change; normal UI games
 still use the underlying rules unchanged.
 
 A net can also stall when it plays greedily (always the action it rates best), which is how every
@@ -452,18 +453,98 @@ Speed in the browser: in a Node run of the release WASM, one bot step took about
 games of 3-5 seats with Magnate took 0.2-0.6 s (340-1,200 steps). The weights are 1.5 MB of the
 1.8 MB bundle.
 
-#### Interpreting evaluations and planning experiments
+**Consortium** (`crates/container-bots/src/consortium.rs`) is psro08, the last net of the population study
+(`weights/psro08.bin` is `training.model.export_weights` of `populations/psro/psro08.pt`). It plays the action it
+rates best with the repetition guard, the `guarded` mode the study measured, at every table size (spec section
+9.4 says why one net and not a mixture). The Rust bot and the Python net play the same games:
+`training/test_evalcore.py` checks the scores, lengths and winners of six games against the Rust arena. It
+takes the WASM bundle from about 1.8 MB to 3.3 MB. Its UI label is **2378**: Magnate's 2280 plus +98 [+91, +111]
+from 6,000 Rust-arena games of Consortium against Magnate at 3-5 seats (seed 21, 2 stalled; a Bradley-Terry fit of
+winner share). The ladder protocol cannot show the difference (10,000 games, greedy and unguarded, rates psro08 2280.8 with 3%
+stalls, because the anchor field is saturated), so the label is a head-to-head figure on the ladder's scale, not a ladder rating.
 
+#### Restricted learners (`--no-call-bank`, `--buy-at-harbor`) and throughput
+
+Training flags (also on `anchors rate`) restrict only the learner seat, in training and in the
+trainer's evals; scripted bots and anchors play normally. They are **not** enforced in the web
+UI bots, so a net trained this way needs the same filter in its Rust bot before export.
+
+- `--no-call-bank`: removes `StartAuction` and `Outbid` (calling the Bank). Sailing to the Bank
+  and buy-outs stay legal.
+- `--buy-at-harbor`: forbids sailing to a harbor where nothing can be bought, and forbids
+  `DoneBuying` with an empty purchase list at a harbor.
+- If a filter would leave no legal move it is ignored for that decision.
+- Ratings under restrictions are not comparable to unrestricted ones.
+
+Runs: `nobank_magnate_30m` (init Magnate, Bank banned only, stopped at 751 s because it stalled,
+ELO ~2219) and a chain that started from nothing (seed 7, no `--init`) with both rules. Each link
+resumed from the previous one's checkpoint:
+
+| Run | Budget used | Envs | Final eval ELO | Stalled tables |
+|---|---:|---:|---:|---:|
+| `nobank_harbor_scratch_30m` | 1,266 s, died of CUDA OOM (last eval 1852 at 1259 s) | 256 | n/a | 7.7% |
+| `nobank_harbor_scratch_30m_cont` (from `ckpt_014.pt`) | 506 s of 540 | 192 | 2010.6 | 11.2% |
+| `nobank_harbor_scratch_30m_cont_30m` | 1,666 s of 1,800 | 192 | 2255.0 | 5.7% |
+| `nobank_harbor_scratch_2h` | 6,634 s of 7,200 | 192 | 2301.1 | 2.45% |
+
+About 3.3 GB of the 10 GB GPU is held by other processes, so keep headroom: use `--envs 192` if
+the default OOMs (the error is in `selfplay._package`). The budget figure is the trainable part;
+8% is reserved for the final evaluation and export.
+
+The 2-hour run (`final.pt` and `weights.bin` in `runs/nobank_harbor_scratch_2h/`, 727k learner
+outcomes, 189M decisions) ended at 2301.1 ELO (1,024 games): 99.7% vs Merchant, 71.2% vs `run1`,
+59.7% vs `run2`, 63.9% vs `exploit_run2`. These opponents play without the restrictions, the net
+plays with both, and the ratings are not comparable to the unrestricted ones. Findings:
+
+- **It plateaued after about 1,000 s.** Periodic evals (256 games each, so noisy by roughly 30
+  ELO) read 2238 at 11 s, 2279 at 978 s, then stayed between 2275 and 2330 for the remaining
+  5,600 s. The best reading, 2329.6 at 3,393 s, was not kept: the run exports the last net, not
+  the best one. The mean reward per iteration stayed at 0.62 throughout (0.623 in the first 900 s,
+  0.619 in the last). One 2-hour run does not show whether a longer budget or another seed would
+  go higher.
+- **Throughput stopped falling.** After the league filled to 5 frozen nets (about 500 s),
+  tables/s stayed at 39-49: 40 around 900-2,700 s when 3.5% of tables stalled, then 45-46 once the
+  stall rate settled near 2%. So the late stall rate was the only thing moving throughput,
+  consistent with the fit above.
+- **Stalls fell with training** (2.1%, 3.6%, 3.5%, then 1.7-2.4% by the second hour) but did not
+  vanish, against 0.07-0.15% for the unrestricted runs. A stalled table costs 2.8x a normal one in
+  learner decisions.
+- **Not done:** the net was not re-rated with `anchors rate --no-call-bank --buy-at-harbor`
+  (3,000 games), it has not been exported to the UI, and the cause of the remaining stalls was not
+  traced. A stall penalty (a reward below the loss floor, or a small per-decision penalty on
+  repeated identical inputs) is only an idea; nothing has been implemented.
+
+Why games/s falls during a run. Units first: an iteration plays until `--envs` tables have
+finished, so `games_per_sec` in `metrics.jsonl` is finished tables per second and `stalled` counts
+stalled tables among them (a stall rate is `stalled / envs`). `games` counts the learner-seat
+outcomes of tables that finished normally, about 2.3 per table, so it is not a table count.
+
+- Frozen opponents (`python -m training.profile_iter --frozen N`, 256 envs): 0 frozen nets
+  156-192 tables/s (play 1.0-1.2 s); 5 frozen nets about 102 (play 2.1 s). Update and advantages
+  cost the same, so the loss is in the play phase: every frozen opponent needs its own forward
+  passes. The league fills to 5 nets within 400-900 s, which explains the 25-40% decline in every
+  run, and throughput is flat once it is full. In `nobank_harbor_scratch_30m_cont_30m` it fell
+  from 65 tables/s (1 net) to 45-46 by t=500 s (5 nets) and stayed there. Only 0 and 5 nets were
+  profiled, not the sizes between.
+- Stalled tables run to the 2,500-action limit. Per-table stall rates (stalled / (iterations x
+  envs)): run2 0.15%, control 0.12%, defense 0.07%, run1 1.0%, exploit_run2 1.7%,
+  `nobank_magnate_30m` 0.7%, and 2.5-11% in the harbor-rule runs. A least-squares fit on a live run
+  gives 1,445 learner decisions per stalled table against 525 per normal one (2.8x), so stalls hold
+  11-14% of the learner decisions and cost about 7-14% more work per finished table. It matches
+  the live run: tables/s rose from 45.7 to 49.0 when stalled tables fell from 4.2% to 3.2%.
+
+#### Interpreting evaluations and planning experiments
 Do not treat a high scripted-bot ELO as proof that a new net is better. Once a net is close to
 100% against Merchant, the scripted field cannot resolve further differences. Add good checkpoints
 as anchors in order of increasing strength, then assess candidates against the entire anchor field.
 Adding an anchor does not refit ratings of existing anchors.
 
-No rating reports a stall count: the `games` field of `anchors rate` is the number requested, not
-the number rated, and the Python evaluations silently drop stalled games. A net that freezes in 3%
-of its games (greedy Magnate did before the guard) therefore still gets a clean-looking ELO from the
-other 97%. A possible improvement is to count them in `anchors.evaluate` and return a `stalled`
-field.
+`anchors.evaluate` and `evaluate_exploit` now report `completed`, `stalled` and `stall_rate`
+(`games` is the number requested, and stalled games are still left out of the rating). Before
+that change no rating reported a stall count: a net that froze in 3% of its games (greedy Magnate
+did before the guard) got a clean-looking ELO from the other 97%. A rating is still a
+statement about a field, not about exploitability; for that see
+[Empirical game-theoretic evaluation](#empirical-game-theoretic-evaluation).
 
 The current evidence says `run2` is only modestly stronger than `run1`, and the self-play curve was
 noisy. The next experiments should therefore measure head-to-head performance against anchors,
@@ -473,7 +554,176 @@ to about 2279 ELO, but the measured difference was a tie; do not claim a defense
 this single paired run. Plausible but unvalidated directions are a more diverse frozen league,
 longer runs, larger or richer feature models, CPU/GPU overlap, and an information-set search layer
 on top of the net. Each requires a controlled before/after comparison and should be recorded here
-after it is measured.
+after it is measured. The equilibrium work suggests an order: a better-trained best-response oracle (the
+learning-rate schedule first; longer budgets and several seeds are still open) should come before any larger net,
+because the schedule alone moved the measured gain from +0.006 to +0.098 against the same opponent (spec section 11).
+
+### Empirical game-theoretic evaluation
+
+An ELO says how a net does against one particular field. It does not say how much a *different*
+opponent could gain against it, which is what "close to an equilibrium" would mean. The tools below
+estimate that gain empirically. [`docs/equilibrium_spec.md`](docs/equilibrium_spec.md) defines every
+quantity and fixes what may be claimed. The most any result here supports is: *an empirically
+estimated approximate equilibrium relative to the tested policy population, game configurations and
+best-response search budget.* No checkpoint is claimed to approximate a Nash equilibrium of the game.
+
+**Utility.** A completed game pays each winner `1/|winners|` and every other seat 0 (ties are broken
+by the engine's rule). A game still running after 2,500 engine actions is stalled and pays every
+seat 0, so stalling never helps a leader; a seat that cannot win is indifferent to it, so every
+report counts stalled games. ELO, rank share and score margin are secondary metrics. The table sizes
+3, 4 and 5 are separate games (the nets see the player count), and the `sample`, `greedy` and
+`guarded` modes of a net are separate strategies that are never pooled. Every report names its seed
+block: decisions use `dev`, claims use `holdout`, and each holdout look is logged in
+`reports/holdout_log.jsonl`.
+
+```sh
+.venv/bin/python -m training.population freeze   # populations/baselines/: read-only copies, hashes and configs
+.venv/bin/python -m training.crossplay run --out reports/crossplay/deployed_dev --seeds 24
+.venv/bin/python -m training.br train --name m1 --init populations/baselines/defense_run2_vs_exploiter_30m.pt \
+    --profile run2,magnate,exploit_run2 --budget-minutes 25
+.venv/bin/python -m training.br eval --candidates m1=runs/br/m1/final.pt --profile run2,magnate,exploit_run2 \
+    --block holdout --seeds 150 --all-focals --out reports/br/m1
+.venv/bin/python -m training.psro solve --cells reports/crossplay/deployed_dev/payoffs.json \
+    --strategies run2,magnate,exploit_run2 --out reports/psro/p0_metagame
+.venv/bin/python -m training.psro init --strategies run2,magnate,control,defense,exploit_run2,merchant \
+    --cells reports/crossplay/deployed_dev/payoffs.json
+.venv/bin/python -m training.psro run --iterations 20 --no-start-after 20:40 --lr 1e-4 --lr-decay linear
+# the command of the first run: an iteration is not started after 20:40 on the machine clock
+.venv/bin/python -m training.psro final --seeds 150    # closing audit on the holdout block: reports/psro/final/report.md
+# the follow-up on the final game (spec section 9.3): 48 more dev seeds for the strategies that can be in the
+# support, a new solve of the nine-strategy game from every cell (it also writes refined_metagame_profile.json),
+# mixtures against other fields, and a probe of the loan action that plays no oracle
+.venv/bin/python -m training.crossplay run --population populations/psro/manifest.json \
+    --strategies psro02,psro03,psro05,magnate,control --seeds 48 --seed-offset 24 --out reports/crossplay/refine_dev
+.venv/bin/python -m training.psro solve --cells reports/crossplay/deployed_dev/payoffs.json,reports/psro/iter_02/crossplay/payoffs.json,reports/psro/iter_03/crossplay/payoffs.json,reports/psro/iter_05/crossplay/payoffs.json,reports/crossplay/refine_dev/payoffs.json \
+    --strategies run2,magnate,control,defense,exploit_run2,merchant,psro02,psro03,psro05 --out reports/psro/refined_metagame
+.venv/bin/python -m training.fields --cells <the same five files> --strategies <the same nine> \
+    --mix refined=@reports/psro/refined_metagame_profile.json --mix old=@reports/psro/final/profile_final.json \
+    --field sigma=@reports/psro/refined_metagame_profile.json --field uniform --field magnate --out reports/psro/refined_fields
+.venv/bin/python -m training.loanprobe --profile @reports/psro/refined_metagame_profile.json --out reports/loanprobe/dev
+```
+
+* **Cross-play** (`training/crossplay.py`) plays every composition of a population at every table
+  size and keeps every game: completed or stalled, score margin, game length, performance by turn
+  position (the first player is random, so the seat index is not turn order), with seed-clustered
+  bootstrap intervals. It writes a `payoffs.json` that the meta-game code reads
+  and a `report.md`. `--length short|extended` runs the other game lengths; Standard is the headline.
+* **Meta-game** (`training/metagame.py`) turns the payoffs into one symmetric game per table size,
+  runs several solvers, each labelled with the solution concept it really targets, and checks every
+  solution with a verifier that shares no code with them. The result is the regret of the solution
+  inside the restricted game, with a bootstrap noise floor. That regret says nothing about
+  strategies outside the population.
+* **Best-response oracle** (`training/br.py`) trains a PPO learner against a fixed mixture of
+  opponents (canonical utility or the shaped training reward) and then measures, on seeds it never
+  saw and paired by common random numbers, how much a seat gains by deviating from the mixture to it.
+  Summed over the seats that is the mixture's NashConv. The learner is only an approximate best
+  response, so its gain is a **lower bound** on the true deviation gain, and a small gain proves
+  nothing until the oracle is shown to find improvements known to exist (see the validation report).
+  The optimiser is Adam at `--lr` (3e-4 by default), constant or, with `--lr-decay linear`, falling to
+  zero over the budget; when the start is already a strong network a lower rate matters (see the
+  milestone report and the PSRO summary).
+* **PSRO** (`training/psro.py`) solves the empirical meta-game, trains a best response to the
+  solution, and admits it only when the lower 95% bound of its measured gain is above zero. It
+  never removes a member because of its ELO. Each iteration writes a report, and
+  `populations/*/results.json` keeps what was measured about every member (coverage, cross-play, best
+  responses), apart from the manifest whose hash the payoff files cite. `psro final` is the closing audit
+  of a run on the holdout block (the last meta-strategy attacked by every strategy and every rejected
+  response, the solution of the final game audited on other seeds, each response against the best member).
+* `training/audit_report.py` and the Rust `audit` binary measure what the 48-action interface does
+  to the game; `training/br_report.py` tabulates best-response training runs against their studies.
+
+**Results so far** (Standard length, 3, 4 and 5 players; every number has its interval in the linked
+report, and none of this is a claim about a Nash equilibrium of the game).
+
+* *Cross-play* (`reports/crossplay/deployed_dev`, 81,648 games, 6 stalled): by winner share relative to an
+  equal share the strategies order as Magnate (the deployed bot) 1.55, control 1.34, defense 1.30, run2 1.13,
+  exploit_run2 1.05, run1 0.62, Merchant 0.02, and in the same order at Short and Extended length. Greedy
+  play without the repetition guard stalls in 1.7% of games, guarded play never did and sampled play in
+  0.004%. The first player wins 1.18 [1.05, 1.30] times an equal share with 3 players (1.10 and 1.05 with 4
+  and 5, intervals that include 1), so every design is balanced over turn position.
+* *Interface audit* ([`reports/audit/summary.md`](reports/audit/summary.md); 300 self-play games per net through
+  the Rust bot): the 48-action cap thins the legal list in 2.0-3.9% of decisions (bidding, up to 123 legal
+  actions), the net's preferred action on the full list is among the dropped ones in 2.6-8.7% of those (well
+  under 0.5% of all decisions), and the repetition guard overrides 0.16% of Magnate's decisions. `RequestLoan`
+  is legal in 39,000-43,000 bidding and deciding decisions per 300 games and no net chose it there (Magnate takes
+  loans in the main phase: 13,282 of 106,786 legal decisions). This was not shown to cost game results; it says
+  which parts of the action space the nets have never used.
+* *Meta-game*: Magnate alone is the equilibrium of the seven-strategy empirical game of the baselines at 3
+  and 5 players (4 players has eight equilibria); `reports/psro/baseline_metagame.md`.
+* *Oracle validation* ([`reports/br/validation/summary.md`](reports/br/validation/summary.md)): three 12-minute
+  oracles (σ = run1 or run2, shaped or canonical objective) gain +0.105 to +0.186 when sampling and +0.167 to
+  +0.182 with the guard over σ on dev seeds, 67-106% of the best pure deviation known in the population
+  (exploit_run2 or Magnate). The canonical winner-share objective learned as fast as the shaped reward, so the
+  later runs use it. The periodic 25-seed study during a run has a half-width of about 0.07 and cannot be used
+  to follow one.
+* *Milestone* ([`reports/br/milestone.md`](reports/br/milestone.md)): against run2, Magnate and
+  exploit_run2 at equal weights, a 25-minute PPO deviation gains at least +0.091 [+0.067, +0.115]
+  expected utility on held-out seeds (NashConv at least +0.37); pure Magnate gains +0.048 of that without new
+  training. The gain is measured to about ±0.025 with 150 seeds per table size, two oracle seeds differ by
+  about 0.03, and against a broader opponent mix the oracle's weights were worse than its initial network
+  when sampled. A small gain from this oracle is therefore not evidence of near-equilibrium.
+* *PSRO* ([`reports/psro/summary.md`](reports/psro/summary.md), closing audit in
+  [`reports/psro/final/report.md`](reports/psro/final/report.md)): from six of those strategies (run2, Magnate,
+  control, defense, exploit_run2, Merchant), seven iterations each trained a 25-minute response against the
+  meta-strategy σ of the current population and admitted it
+  only if the lower 95% bound of its gain over σ was above 0 (100 dev seeds per table size). psro02, psro03 and
+  psro05 were admitted (nine strategies) and four responses were not. The gain of the response fell from +0.098
+  [+0.070, +0.126] against the σ of the baselines (iteration 2; +0.120 [+0.093, +0.145] on held-out seeds) to
+  +0.015 [−0.011, +0.041] and +0.007 [−0.021, +0.036] against the σ of the final population (iterations 6 and 7),
+  which is the resolution of the study (about ±0.03). Only the first admitted response is clearly better than the
+  best member of its population (+0.080 [+0.051, +0.108], paired); iterations 3 and 5 are +0.027 and +0.029 above
+  it with intervals that reach 0. The same σ attacked with Adam at 3e-4 constant gained +0.006 and with 1e-4
+  falling to 0 gained +0.098 (iterations 1 and 2), so a small gain is evidence about the oracle before it is
+  evidence about σ. On held-out seeds the best deviation found against the σ of the final population is the
+  response of iteration 7, which was rejected on the dev seeds: +0.027 [+0.005, +0.049]; the nine strategies gain
+  at most +0.005 against it, and on a second block the best member (psro05) gains +0.017 [+0.004, +0.031] against
+  the solution of the final game, which is σ's own estimation error. Of the two marginal admissions iteration 3 was
+  confirmed on held-out seeds (+0.033 [+0.007, +0.060]) and iteration 5 was not (+0.021 [−0.009, +0.050]). The loop
+  stopped at a time guard, not at a convergence test. All of these are lower bounds on exploitability from a
+  25-minute oracle, for this population only; none of it is a claim about a Nash equilibrium of the game.
+* *How to read the PSRO numbers* (spec section 9.1 and 12). (1) The oracle's settings were changed after
+  iteration 1 (Adam 3e-4 constant, then 1e-4 falling to 0) because of what that iteration showed, so the loop is
+  tuned on the dev block; the closing audit and the confirmations use held-out seeds. (2) Iterations 4 and 5, and
+  6 and 7, attacked the same σ from the same initial network (psro03) with different oracle and study seeds: the
+  first pair gained +0.030 and +0.052 and the admission rule split them, the second +0.015 and +0.007. Oracle
+  seeds can therefore differ by 0.02-0.03 (as in the milestone), the size of the gains being decided. (3) σ is
+  solved from 16-seed cross-play cells and has an estimation error of its own: a member of its support (psro03
+  against the σ of iteration 4) gained +0.023 [+0.007, +0.039] on dev seeds the solution never saw, which the
+  bootstrap noise floor (mean gain 0.012-0.023 by table size, 95th percentile 0.035-0.060) had predicted. (4) The
+  NashConv implied by the response fell from +0.39 [+0.28, +0.50] (iteration 2) to about +0.05 (iterations 6 and
+  7, intervals that include 0), and the closing audit on held-out seeds measures at least +0.106 [+0.022, +0.192]
+  for the last σ. Every look at the holdout block is in `reports/holdout_log.jsonl`; offsets 0-149, 200-599,
+  700-799 and 900-999 have been used (and 1000-1299, 1400-1549 and 1600-1699 since, see spec section 9.4), so take a new look at 1,700 or later.
+* *The final game, refined, and the loan probe* (spec section 9.3). 48 more dev seeds for psro02, psro03, psro05,
+  Magnate and control (48,720 games, 1 stalled) cut the bootstrap noise floor of the gain of σ from 0.012-0.022 to
+  0.004-0.006 on average (95th percentile from 0.051-0.070 to 0.025-0.033), and the nine-strategy game was solved
+  again from 206,736 simulated games ([`reports/psro/refined_metagame.md`](reports/psro/refined_metagame.md)). Its
+  empirical equilibrium is pure: psro05 at 3 and 4 players and psro03 at 5; the mixtures of the first audit were
+  not identified by 16-seed cells. Against σ and against the uniform mixture of the nine, psro05 is ahead at 3
+  players (+0.051 [+0.029, +0.082] over psro03 against the uniform mixture), while at 4 and 5 players psro05 and
+  psro03 are within noise on every field ([`reports/psro/refined_fields.md`](reports/psro/refined_fields.md);
+  `training/fields.py` computes these from the cells, no new game). Forcing `RequestLoan` instead of the net's pick
+  in 10% of its bidding decisions cost psro03 and psro05 −0.079 [−0.103, −0.054] and −0.079 [−0.100, −0.057] per
+  seat, and in 10% of its deciding decisions −0.017 [−0.033, −0.000] and −0.004 [−0.021, +0.015]; a rule that
+  loans when the pick is a bid of all the net's cash never fired
+  ([`reports/loanprobe/dev.md`](reports/loanprobe/dev.md)). That is a negative result for three fixed rules, not
+  a proof that no loan policy helps.
+* *The final response, psro08, and the bot* (spec section 9.4). One more oracle, 50 minutes (twice the loop's
+  budget, Adam 1e-4 falling to 0, canonical utility, exploration 0.1), started from psro05 against the refined
+  solution (psro05 at 3 and 4 players, psro03 at 5). On 100 dev seeds per table size the guarded response gained
+  +0.033 [+0.005, +0.060]; on 300 held-out seeds (offset 1000) +0.022 [+0.008, +0.035] (psro03 −0.024, psro05
+  −0.002 against the same σ). It was admitted as psro08 (ten strategies). Its cells were simulated (110,880 games,
+  24 seeds each) and the ten-strategy game solved again: the equilibria mix psro02, psro03, psro05 and psro08 with
+  weights that 24-seed cells do not identify, and psro08 is in the support at every table size and earns the
+  equal share against every solution (3 players 0.333, 4 players 0.247, 5 players 0.200). Pure psro08 is within
+  noise of the solved mixture against σ, the uniform field and Magnate, and is ahead of the previous solution
+  at 5 players against the uniform field (+0.022 [+0.017, +0.026]), so the bot plays psro08 alone. On a fresh
+  holdout block (offset 1400, 150 seeds, 18,000 games, 3 stalled) no strategy gains over the ten-strategy σ by
+  more than noise (psro05 +0.019 [−0.002, +0.041], psro08 +0.008 [−0.003, +0.020]); against a table of Magnate
+  (offset 1600, 100 seeds, 12,000 games, 0 stalled) psro08 gains +0.134 [+0.110, +0.159] per seat, psro05
+  +0.115 [+0.089, +0.144], psro03 +0.118 [+0.092, +0.143]. No result separates psro08 from psro05 at 3 and 4
+  players beyond the 0.02 resolution of the study, so psro08 is the strongest net measured, not a demonstrated
+  improvement over psro05 there. Reports: `reports/psro/final_br/`.
 
 ## Rules decisions
 

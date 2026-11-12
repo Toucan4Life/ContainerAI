@@ -2,7 +2,7 @@ use container_engine::action::Action;
 use container_engine::config::{GameConfig, GameLength, MAX_PLAYERS, MIN_PLAYERS};
 use container_engine::game::Game;
 
-use crate::{OPPONENTS, create, magnate};
+use crate::{OPPONENTS, consortium, create, magnate};
 
 const LIMIT: usize = 20_000;
 
@@ -164,6 +164,29 @@ fn magnate_beats_merchant_at_every_length() {
         assert!(
             won * 10 >= games * 9,
             "Magnate won {won} of {games} games at the {length:?} length"
+        );
+    }
+}
+
+#[test]
+fn consortium_beats_merchant_at_every_length() {
+    for length in [GameLength::Short, GameLength::Standard, GameLength::Extended] {
+        let (mut won, mut games) = (0, 0);
+        for players in MIN_PLAYERS..=MAX_PLAYERS {
+            for seed in 0..6 {
+                // Seat 0 is Consortium, everyone else plays Merchant.
+                let table = config(players, length, seed);
+                let Played { game, .. } = play_with(table, |seat| {
+                    if seat == 0 { consortium::ID } else { "merchant" }
+                });
+                let results = game.results().expect("a finished game");
+                won += usize::from(results.winners == [0]);
+                games += 1;
+            }
+        }
+        assert!(
+            won * 10 >= games * 9,
+            "Consortium won {won} of {games} games at the {length:?} length"
         );
     }
 }

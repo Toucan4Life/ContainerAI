@@ -1,0 +1,29 @@
+{
+  "population": "populations/psro/manifest.json",
+  "cells": [
+    "reports/crossplay/deployed_dev/payoffs.json"
+  ],
+  "players": [
+    3,
+    4,
+    5
+  ],
+  "length": 1,
+  "minutes": 25.0,
+  "utility": "canonical",
+  "gamma": 0.1,
+  "lr": 0.0001,
+  "lr_decay": "linear",
+  "entropy": 0.01,
+  "envs": 256,
+  "eval_minutes": 8.4,
+  "eval_seeds": 25,
+  "study_seeds": 100,
+  "study_offset": 1000,
+  "cell_seeds": 16,
+  "min_gain": 0.0,
+  "seed": 100,
+  "boot_reps": 200,
+  "solver_seed": 0,
+  "modes": "sample,guarded"
+}

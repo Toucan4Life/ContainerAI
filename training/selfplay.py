@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+from types import SimpleNamespace
 
 import numpy as np
 import torch
@@ -64,6 +65,57 @@ class Decisions:
 
 MAX_ACTIONS = 48
 WIDTHS = (8, 16, 32, MAX_ACTIONS)
+
+
+class Guard:
+    """The repetition guard of the deployed greedy nets, for batches of games.
+
+    `Neural::best_untried` (crates/container-bots/src/neural.rs) keeps a greedy net from freezing a
+    table: it does not play the same action twice from the same input (state and offered actions)
+    until it has played all the others. The memory belongs to one seat of one game, like the one
+    `Neural` per seat in the arena. A net that plays this rule at temperature 0 is the deployed
+    "guarded greedy" policy; plain argmax is the unguarded one.
+    """
+
+    def __init__(self, envs: int, device: str):
+        self.device = device
+        self.tried: list[dict[int, int]] = [{} for _ in range(envs * MAX_PLAYERS)]
+        self._mult: torch.Tensor | None = None
+
+    def reset(self, env: int) -> None:
+        for seat in range(MAX_PLAYERS):
+            self.tried[env * MAX_PLAYERS + seat].clear()
+
+    def fingerprint(self, state: torch.Tensor, acts: torch.Tensor) -> torch.Tensor:
+        """A 64-bit hash of the exact input bits per row. Padding is zero, so it does not depend on width."""
+        bits = torch.cat([state, acts.flatten(1)], dim=1).contiguous().view(torch.int32).to(torch.int64)
+        if self._mult is None or self._mult.numel() != bits.shape[1]:
+            gen = torch.Generator().manual_seed(20240607)
+            mult = torch.randint(-(2**62), 2**62, (bits.shape[1],), generator=gen, dtype=torch.int64) | 1
+            self._mult = mult.to(self.device)
+        h = (bits * self._mult).sum(dim=1)
+        return h ^ (h >> 29)
+
+    def choose(self, rows: np.ndarray, seats: np.ndarray, logits: torch.Tensor, mask: torch.Tensor,
+               state: torch.Tensor, acts: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Picks for the envs `rows` (seat `seats` to move). Returns (row index tensor, picked index)."""
+        ix = torch.from_numpy(rows).to(self.device)
+        fps = self.fingerprint(state[ix], acts[ix]).cpu().tolist()
+        keys = (rows * MAX_PLAYERS + seats).tolist()
+        seen = torch.tensor([self.tried[k].get(f, 0) for k, f in zip(keys, fps)],
+                            dtype=torch.int64, device=self.device)
+        lg, valid = logits[ix], mask[ix]
+        width = lg.shape[1]
+        pos = torch.arange(width, device=self.device, dtype=torch.int64)
+        fresh = valid & (((seen[:, None] >> pos) & 1) == 0)
+        exhausted = ~fresh.any(dim=1)  # every action has been played from this input: start afresh
+        allowed = torch.where(exhausted[:, None], valid, fresh)
+        scored = lg.masked_fill(~allowed, float("-inf"))
+        pick = (width - 1) - scored.flip(1).argmax(dim=1)  # the last best on ties, as `max_by` does in Rust
+        now = torch.where(exhausted, torch.zeros_like(seen), seen) | (torch.ones_like(seen) << pick)
+        for k, f, v in zip(keys, fps, now.tolist()):
+            self.tried[k][f] = v
+        return ix, pick
 
 
 class GraphedForward:
@@ -138,6 +190,10 @@ class Roller:
     Games that are still running when `collect` returns carry over to the next call, so no work is
     thrown away and long games are not under-represented. With `limit` set, only that many games
     are ever started (used for evaluation, where every game must be played to the end).
+
+    `next_table` returns `(players, kinds, seed)` or `(players, kinds, seed, length)`. After every
+    `collect`, `finished` holds the winners (bit mask per seat) and action counts of the games it
+    returned, in the same order.
     """
 
     def __init__(self, env: BatchEnv, next_table, device: str, rng=None, limit: int | None = None, record=True):
@@ -150,6 +206,9 @@ class Roller:
         self.started = 0
         self.choice = np.zeros(env.n, dtype=np.int32)
         self.forward = GraphedForward(env.n, env.state_dim, env.action_dim, device)
+        self.guard = Guard(env.n, device)
+        self.finished = SimpleNamespace(gid=np.zeros(0, np.int64), winners=np.zeros(0, np.int32),
+                                        actions=np.zeros(0, np.int32))
         for i in range(env.n):
             self._start(i)
 
@@ -157,10 +216,11 @@ class Roller:
         if self.limit is not None and self.started >= self.limit:
             self.gid[i] = -1
             return
-        players, kinds, seed = self.next_table()
-        self.env.reset(i, players, seed, kinds)
+        players, kinds, seed, *length = self.next_table()
+        self.env.reset(i, players, seed, kinds, *length)
+        self.guard.reset(i)
         self.gid[i] = self.started
-        self.table[i] = (players, kinds, seed)
+        self.table[i] = (players, kinds, seed, *length)
         self.started += 1
 
     def close(self) -> None:
@@ -170,10 +230,14 @@ class Roller:
         return int((self.gid >= 0).sum())
 
     @torch.no_grad()
-    def collect(self, policies, target: int | None = None, mode="sample", beta=0.0, greedy_slots=()):
+    def collect(self, policies, target: int | None = None, mode="sample", beta=0.0, greedy_slots=(),
+                guarded_slots=(), adjust=None):
         """Plays until `target` games have finished (all started games when None).
 
-        `greedy_slots` are opponent slots that play their best action even when `mode` samples.
+        `greedy_slots` are opponent slots that play their best action even when `mode` samples;
+        `guarded_slots` play it with the repetition guard (see `Guard`), as the deployed nets do.
+        `adjust` maps a slot to `fn(action, rows, mask, acts) -> action`, which may replace the pick of
+        the envs `rows` (a tensor of env indices) after the net and the guard have chosen.
         Returns `(rec, status, players, scores, tables)`; rec's env ids index those arrays.
         """
         env, dev = self.env, self.device
@@ -181,10 +245,11 @@ class Roller:
         self.forward.forget_except(policies.values())
         while True:
             env.advance()
-            status, players, scores = env.results()
+            status, players, scores, winners, actions = env.results_ex()
             ended = np.nonzero(((status == DONE) | (status == STALLED)) & (self.gid >= 0))[0]
             for i in ended:
-                done.append((int(self.gid[i]), self.table[i], int(status[i]), int(players[i]), scores[i].copy()))
+                done.append((int(self.gid[i]), self.table[i], int(status[i]), int(players[i]), scores[i].copy(),
+                             int(winners[i]), int(actions[i])))
                 self._start(int(i))
             if len(ended):
                 env.advance()
@@ -208,7 +273,16 @@ class Roller:
             picks = []
             for s in used:
                 logits, value, sampled, best = self.forward.run(policies[s], w)
-                action = best if mode == "greedy" or s in greedy_slots else sampled
+                if s in guarded_slots:
+                    rows = pend[slot[pend] == s]
+                    action = best.clone()
+                    ix, pick = self.guard.choose(rows, seat[rows], logits, mk_all, st_all, self.forward.raw_acts)
+                    action[ix] = pick
+                else:
+                    action = best if mode == "greedy" or s in greedy_slots else sampled
+                if adjust and s in adjust:
+                    rows = torch.from_numpy(pend[slot[pend] == s]).to(dev)
+                    action = adjust[s](action.clone(), rows, mk_all, self.forward.raw_acts)
                 if s == LEARNER:
                     idx = pend[slot[pend] == s]
                     ix = torch.from_numpy(idx).to(dev)
@@ -277,11 +351,20 @@ class Roller:
         status = np.array([d[2] for d in done], dtype=np.int32)
         players = np.array([d[3] for d in done], dtype=np.int32)
         scores = np.array([d[4] for d in done], dtype=np.int32).reshape(len(done), MAX_PLAYERS)
+        self.finished = SimpleNamespace(
+            gid=np.array([d[0] for d in done], dtype=np.int64),
+            winners=np.array([d[5] for d in done], dtype=np.int32),
+            actions=np.array([d[6] for d in done], dtype=np.int32),
+        )
         return rec, status, players, scores, [d[1] for d in done]
 
 
-def advantages(rec: Decisions, env_ids, seats, status, players, scores, lam=0.97):
-    """Per-decision advantage and return. The only reward is the outcome at the game's end."""
+def advantages(rec: Decisions, env_ids, seats, status, players, scores, lam=0.97, payoff=None):
+    """Per-decision advantage and return. The only reward is the outcome at the game's end.
+
+    The outcome is `reward` of the final scores, or `payoff[game, seat]` when given (the canonical
+    utility, say). A stalled game pays `STALL_REWARD` either way.
+    """
     n_total = len(env_ids)
     value = torch.cat(rec.value).float().cpu().numpy()
     keep = np.array([status[e] in (DONE, STALLED) for e in env_ids]) if n_total else np.zeros(0, bool)
@@ -294,7 +377,10 @@ def advantages(rec: Decisions, env_ids, seats, status, players, scores, lam=0.97
         if len(group) == 0 or not keep[group[0]]:
             continue
         e, p = env_ids[group[0]], seats[group[0]]
-        r = STALL_REWARD if status[e] == STALLED else reward(scores[e], int(players[e]))[p]
+        if status[e] == STALLED:
+            r = STALL_REWARD
+        else:
+            r = reward(scores[e], int(players[e]))[p] if payoff is None else payoff[e, p]
         v = value[group]
         nxt = np.append(v[1:], r)
         delta = nxt - v
@@ -309,7 +395,7 @@ def advantages(rec: Decisions, env_ids, seats, status, players, scores, lam=0.97
 def table_stats(status, players, scores, tables, learner_seats_only=True):
     """Mean learner reward over finished games, and how many games finished."""
     rewards = []
-    for i, (n, kinds, _) in enumerate(tables):
+    for i, (n, kinds, *_) in enumerate(tables):
         if status[i] != DONE:
             continue
         r = reward(scores[i], n)

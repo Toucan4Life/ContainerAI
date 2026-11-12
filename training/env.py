@@ -11,6 +11,10 @@ import numpy as np
 RANDOM, SIMPLE, MERCHANT = -1, -2, -3
 MAX_PLAYERS = 5
 IDLE, PENDING, DONE, STALLED = 0, 1, 2, 3
+SHORT, STANDARD, EXTENDED = 0, 1, 2
+LENGTH_NAMES = {SHORT: "short", STANDARD: "standard", EXTENDED: "extended"}
+PHASE_NAMES = ["main", "produce", "buy", "load", "arrange", "bid", "decide", "seize", "distribute",
+               "bank_bid_containers", "bank_bid_cash", "game_over"]
 
 
 def find_library() -> Path:
@@ -49,10 +53,16 @@ class BatchEnv:
             getattr(lib, name).argtypes = [C.c_void_p]
         lib.cenv_dims.argtypes = [C.POINTER(C.c_uint32)]
         lib.cenv_reset.argtypes = [C.c_void_p, C.c_size_t, C.c_size_t, C.c_uint64, C.POINTER(C.c_int)]
+        lib.cenv_reset_ex.argtypes = [C.c_void_p, C.c_size_t, C.c_size_t, C.c_uint64, C.c_int, C.POINTER(C.c_int)]
+        lib.cenv_set_horizon.argtypes = [C.c_void_p, C.c_size_t]
+        lib.cenv_results_ex.argtypes = [C.c_void_p] + [C.POINTER(C.c_int)] * 5
+        lib.cenv_decision_info.argtypes = [C.c_void_p, C.POINTER(C.c_int), C.POINTER(C.c_int)]
         lib.cenv_observe.argtypes = [
             C.c_void_p, C.POINTER(C.c_float), C.POINTER(C.c_float), C.POINTER(C.c_uint8),
             C.POINTER(C.c_int), C.POINTER(C.c_int),
         ]
+        lib.cenv_ban_bank.argtypes = [C.c_void_p, C.c_int]
+        lib.cenv_require_harbor_purchase.argtypes = [C.c_void_p, C.c_int]
         lib.cenv_step.argtypes = [C.c_void_p, C.POINTER(C.c_int)]
         lib.cenv_teacher.argtypes = [C.c_void_p, C.POINTER(C.c_int)]
         lib.cenv_results.argtypes = [C.c_void_p] + [C.POINTER(C.c_int)] * 3
@@ -72,6 +82,10 @@ class BatchEnv:
         self._status = np.zeros(n, dtype=np.int32)
         self._players = np.zeros(n, dtype=np.int32)
         self._scores = np.zeros((n, MAX_PLAYERS), dtype=np.int32)
+        self._winners = np.zeros(n, dtype=np.int32)
+        self._actions = np.zeros(n, dtype=np.int32)
+        self._legal = np.zeros(n, dtype=np.int32)
+        self._phase = np.zeros(n, dtype=np.int32)
 
     def close(self) -> None:
         if self.handle:
@@ -84,9 +98,24 @@ class BatchEnv:
         except Exception:
             pass
 
-    def reset(self, i: int, players: int, seed: int, kinds: list[int]) -> None:
+    def ban_bank(self, slot: int) -> None:
+        """Seats of this slot can no longer call the Bank (start or outbid an auction)."""
+        self.lib.cenv_ban_bank(self.handle, slot)
+
+    def require_harbor_purchase(self, slot: int) -> None:
+        """Seats of this slot must buy something whenever they sail to a harbor."""
+        self.lib.cenv_require_harbor_purchase(self.handle, slot)
+
+    def reset(self, i: int, players: int, seed: int, kinds: list[int], length: int = STANDARD) -> None:
         k = np.asarray(kinds[:players], dtype=np.int32)
-        self.lib.cenv_reset(self.handle, i, players, seed, _ptr(k, C.c_int))
+        if length == STANDARD:
+            self.lib.cenv_reset(self.handle, i, players, seed, _ptr(k, C.c_int))
+        else:
+            self.lib.cenv_reset_ex(self.handle, i, players, seed, length, _ptr(k, C.c_int))
+
+    def set_horizon(self, horizon: int) -> None:
+        """Games that have taken this many actions without ending are stalled (from the next advance)."""
+        self.lib.cenv_set_horizon(self.handle, horizon)
 
     def advance(self) -> None:
         self.lib.cenv_advance(self.handle)
@@ -114,6 +143,20 @@ class BatchEnv:
             _ptr(self._scores, C.c_int),
         )
         return self._status, self._players, self._scores
+
+    def results_ex(self):
+        """Returns (status, players, scores, winners, actions): the winners as a bit mask per env (bit p
+        for seat p, engine tie-break applied, 0 unless the game is done) and the engine actions taken."""
+        self.lib.cenv_results_ex(
+            self.handle, _ptr(self._status, C.c_int), _ptr(self._players, C.c_int),
+            _ptr(self._scores, C.c_int), _ptr(self._winners, C.c_int), _ptr(self._actions, C.c_int),
+        )
+        return self._status, self._players, self._scores, self._winners, self._actions
+
+    def decision_info(self):
+        """Returns (legal, phase) per env: legal actions before thinning and the phase code, -1 if idle."""
+        self.lib.cenv_decision_info(self.handle, _ptr(self._legal, C.c_int), _ptr(self._phase, C.c_int))
+        return self._legal, self._phase
 
 
 def win_fraction(scores: np.ndarray, players: int) -> np.ndarray:

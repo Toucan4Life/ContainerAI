@@ -3,6 +3,11 @@
 pub const MIN_PLAYERS: usize = 3;
 pub const MAX_PLAYERS: usize = 5;
 
+/// Engine actions after which a game that has not ended counts as stalled. The batch environment and
+/// the arena share it, so a stall means the same in training, in Python evaluation and in the arena.
+/// The longest game that ever ended in a 5,400-game audit took 1,923 actions (`docs/equilibrium_spec.md`).
+pub const STALL_HORIZON: usize = 2_500;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum GameLength {
     Short,

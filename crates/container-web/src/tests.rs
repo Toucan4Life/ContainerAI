@@ -40,6 +40,23 @@ fn magnate_plays_a_whole_game_in_a_session() {
 }
 
 #[test]
+fn consortium_plays_a_whole_game_in_a_session() {
+    for kinds in [
+        &["consortium", "magnate", "consortium"][..],
+        &["consortium", "merchant", "consortium", "simple"],
+        &["consortium"; 5],
+    ] {
+        let mut session = Session::new(&config(kinds, 5)).unwrap();
+        let mut steps = 0;
+        while session.step().unwrap() {
+            steps += 1;
+            assert!(steps < 20_000, "the game must end");
+        }
+        assert_eq!(session.snapshot()["gameOver"], true);
+    }
+}
+
+#[test]
 fn a_human_gets_legal_actions_only_on_their_own_turn() {
     let mut session = Session::new(&config(&["human", "simple", "simple"], 7)).unwrap();
     let mut human_moves = 0;
@@ -90,4 +107,30 @@ fn the_opponent_list_is_ordered_by_rating() {
     let list: Value = serde_json::from_str(&crate::opponents_json()).unwrap();
     let elos: Vec<u64> = list.as_array().unwrap().iter().map(|o| o["elo"].as_u64().unwrap()).collect();
     assert!(elos.windows(2).all(|w| w[0] <= w[1]));
+}
+
+#[test]
+fn winning_a_bank_auction_is_logged() {
+    let mut wins = 0;
+    for seed in 0..6 {
+        let mut session = Session::new(&config(&["magnate"; 5], seed)).unwrap();
+        let mut won_before = false;
+        while session.step().unwrap() {
+            let snap = session.snapshot();
+            let won = snap["turn"]["wonAuction"] == true;
+            if won && !won_before {
+                // One step adds at most a few entries, so the win is among the last ones.
+                let log = snap["log"].as_array().unwrap();
+                let said = log
+                    .iter()
+                    .rev()
+                    .take(3)
+                    .any(|e| e["text"].as_str().is_some_and(|t| t.contains(" wins the ")));
+                assert!(said, "an auction was won but the log does not say so");
+                wins += 1;
+            }
+            won_before = won;
+        }
+    }
+    assert!(wins > 0, "no bank auction was won in any game");
 }
