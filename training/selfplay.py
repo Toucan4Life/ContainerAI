@@ -9,7 +9,8 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 
-from training.env import DONE, MAX_PLAYERS, MERCHANT, PENDING, RANDOM, SIMPLE, STALLED, BatchEnv, win_fraction
+from training.env import (BOUGHT, DONE, MAX_PLAYERS, MERCHANT, PENDING, PLACED_AT, RANDOM, REAL_BIDS, SIMPLE, SOLD, STALLED,
+                          BatchEnv, win_fraction)
 
 LEARNER = 0
 STALL_REWARD = 0.0  # a game that never ends is worse than any loss; the engine has no rule against it
@@ -48,9 +49,26 @@ def trade_term(traded, seat: int) -> float:
     return float(np.tanh(traded[seat] / TRADE_SCALE))
 
 
+BUY_SCALE, DEAL_SCALE, SELL_SCALE = 8.0, 20.0, 6.0  # containers bought, bids and containers sold at which a term is 0.76
+FAIR_PRICE = 3  # a container left on the ship is worth $3 at the end, so a buyer cannot lose at this price or less
+INTERACTION_WEIGHTS = (0.2, 0.2, 0.2, 0.4)  # bought, bids, sold, fair prices
+
+
+def interaction_term(inter, seat: int) -> float:
+    """0..1 for how much the seat deals with the others: it buys containers from their factories and
+    harbors, bids at least $2 on their deliveries, sells its own containers to them, and lays its
+    containers out at `FAIR_PRICE` or less instead of only in the top lots nobody pays for."""
+    row = inter[seat]
+    placed = row[PLACED_AT:PLACED_AT + 6]
+    fair = placed[:FAIR_PRICE].sum() / placed.sum() if placed.sum() else 0.0
+    terms = (np.tanh(row[BOUGHT] / BUY_SCALE), np.tanh(row[REAL_BIDS] / DEAL_SCALE), np.tanh(row[SOLD] / SELL_SCALE), fair)
+    return float(np.dot(INTERACTION_WEIGHTS, terms))
+
+
 def reward(scores: np.ndarray, players: int, welfare_weight: float = 0.0, win_only: bool = False,
            geomean_weight: float = 0.0, trade_weight: float = 0.0, traded=None, min_trade: float = 0.0,
-           penalty: float = 0.0, island_weight: float = 0.0, island=None) -> np.ndarray:
+           penalty: float = 0.0, island_weight: float = 0.0, island=None,
+           inter_weight: float = 0.0, inter=None) -> np.ndarray:
     """Outcome per seat in 0..1: the share of opponents beaten, blended with the score margin.
 
     `welfare_weight` moves that share of the reward onto `table_welfare`, which every seat gets alike, so
@@ -58,8 +76,14 @@ def reward(scores: np.ndarray, players: int, welfare_weight: float = 0.0, win_on
     `win_only` pays the share of opponents beaten alone, with no margin term. `geomean_weight` pays that
     share plus a `table_geomean` term of that weight instead of the margin. `trade_weight` pays that share
     `min_trade` pays that share minus `penalty` times the seat's relative shortfall of `traded` below it.
+    `inter_weight` blends the default reward with `interaction_term`.
     `trade_weight` pays that share plus, per seat, the `trade_term` of `traded`, the money of the deliveries it sold to or won from a player.
     """
+    if inter_weight:
+        s = scores[:players].astype(np.float64)
+        margin = (s - (s.sum() - s) / (players - 1)) / 50.0
+        own = 0.6 * win_fraction(scores, players) + 0.4 * (0.5 + 0.5 * np.tanh(margin))
+        return (1.0 - inter_weight) * own + inter_weight * np.array([interaction_term(inter, p) for p in range(players)])
     if win_only:
         return win_fraction(scores, players)
     if island_weight:
@@ -307,10 +331,11 @@ class Roller:
             status, players, scores, winners, actions = env.results_ex()
             traded = env.traded()
             breakdown = env.breakdown()
+            interaction = env.interaction()
             ended = np.nonzero(((status == DONE) | (status == STALLED)) & (self.gid >= 0))[0]
             for i in ended:
                 done.append((int(self.gid[i]), self.table[i], int(status[i]), int(players[i]), scores[i].copy(),
-                             int(winners[i]), int(actions[i]), traded[i].copy(), breakdown[i].copy()))
+                             int(winners[i]), int(actions[i]), traded[i].copy(), breakdown[i].copy(), interaction[i].copy()))
                 self._start(int(i))
             if len(ended):
                 env.advance()
@@ -420,11 +445,12 @@ class Roller:
             actions=np.array([d[6] for d in done], dtype=np.int32),
             traded=np.array([d[7] for d in done], dtype=np.int32).reshape(len(done), MAX_PLAYERS),
             breakdown=np.array([d[8] for d in done], dtype=np.int32).reshape(len(done), MAX_PLAYERS, 4),
+            interaction=np.array([d[9] for d in done], dtype=np.int32).reshape(len(done), MAX_PLAYERS, -1),
         )
         return rec, status, players, scores, [d[1] for d in done]
 
 
-def advantages(rec: Decisions, env_ids, seats, status, players, scores, lam=0.97, payoff=None, welfare_weight=0.0, win_only=False, geomean_weight=0.0, trade_weight=0.0, traded=None, min_trade=0.0, penalty=0.0, island_weight=0.0, island=None):
+def advantages(rec: Decisions, env_ids, seats, status, players, scores, lam=0.97, payoff=None, welfare_weight=0.0, win_only=False, geomean_weight=0.0, trade_weight=0.0, traded=None, min_trade=0.0, penalty=0.0, island_weight=0.0, island=None, inter_weight=0.0, inter=None):
     """Per-decision advantage and return. The only reward is the outcome at the game's end.
 
     The outcome is `reward` of the final scores, or `payoff[game, seat]` when given (the canonical
@@ -447,7 +473,8 @@ def advantages(rec: Decisions, env_ids, seats, status, players, scores, lam=0.97
         else:
             r = reward(scores[e], int(players[e]), welfare_weight, win_only, geomean_weight, trade_weight,
                    None if traded is None else traded[e], min_trade, penalty,
-                   island_weight, None if island is None else island[e])[p] if payoff is None else payoff[e, p]
+                   island_weight, None if island is None else island[e],
+                   inter_weight, None if inter is None else inter[e])[p] if payoff is None else payoff[e, p]
         v = value[group]
         nxt = np.append(v[1:], r)
         delta = nxt - v
@@ -459,7 +486,7 @@ def advantages(rec: Decisions, env_ids, seats, status, players, scores, lam=0.97
     return adv, ret, keep
 
 
-def table_stats(status, players, scores, tables, learner_seats_only=True, welfare_weight=0.0, win_only=False, geomean_weight=0.0, trade_weight=0.0, traded=None, min_trade=0.0, penalty=0.0, island_weight=0.0, island=None):
+def table_stats(status, players, scores, tables, learner_seats_only=True, welfare_weight=0.0, win_only=False, geomean_weight=0.0, trade_weight=0.0, traded=None, min_trade=0.0, penalty=0.0, island_weight=0.0, island=None, inter_weight=0.0, inter=None):
     """Mean learner reward over finished games, and how many games finished."""
     rewards = []
     for i, (n, kinds, *_) in enumerate(tables):
@@ -467,6 +494,7 @@ def table_stats(status, players, scores, tables, learner_seats_only=True, welfar
             continue
         r = reward(scores[i], n, welfare_weight, win_only, geomean_weight, trade_weight,
                    None if traded is None else traded[i], min_trade, penalty,
-                   island_weight, None if island is None else island[i])
+                   island_weight, None if island is None else island[i],
+                   inter_weight, None if inter is None else inter[i])
         rewards += [r[s] for s in range(n) if kinds[s] == LEARNER]
     return (float(np.mean(rewards)) if rewards else 0.0), len(rewards)

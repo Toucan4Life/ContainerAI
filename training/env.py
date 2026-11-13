@@ -10,6 +10,8 @@ import numpy as np
 
 RANDOM, SIMPLE, MERCHANT, TRADER = -1, -2, -3, -4
 MAX_PLAYERS = 5
+INTERACTION = 16  # columns of `BatchEnv.interaction`, see `crates/container-env`
+(BOUGHT, SPENT, SOLD, EARNED, BIDS, BID_MONEY, REAL_BIDS, PLACED_AT) = range(8)  # PLACED_AT..PLACED_AT+5: laid out in a $1..$6 lot
 IDLE, PENDING, DONE, STALLED = 0, 1, 2, 3
 SHORT, STANDARD, EXTENDED = 0, 1, 2
 LENGTH_NAMES = {SHORT: "short", STANDARD: "standard", EXTENDED: "extended"}
@@ -57,8 +59,10 @@ class BatchEnv:
         lib.cenv_set_horizon.argtypes = [C.c_void_p, C.c_size_t]
         lib.cenv_results_ex.argtypes = [C.c_void_p] + [C.POINTER(C.c_int)] * 5
         lib.cenv_set_min_bid.argtypes = [C.c_void_p, C.c_int, C.c_uint32]
+        lib.cenv_set_max_price.argtypes = [C.c_void_p, C.c_int, C.c_uint32]
         lib.cenv_breakdown.argtypes = [C.c_void_p, C.POINTER(C.c_int)]
         lib.cenv_traded.argtypes = [C.c_void_p, C.POINTER(C.c_int)]
+        lib.cenv_interaction.argtypes = [C.c_void_p, C.POINTER(C.c_int)]
         lib.cenv_decision_info.argtypes = [C.c_void_p, C.POINTER(C.c_int), C.POINTER(C.c_int)]
         lib.cenv_observe.argtypes = [
             C.c_void_p, C.POINTER(C.c_float), C.POINTER(C.c_float), C.POINTER(C.c_uint8),
@@ -89,6 +93,7 @@ class BatchEnv:
         self._scores = np.zeros((n, MAX_PLAYERS), dtype=np.int32)
         self._traded = np.zeros((n, MAX_PLAYERS), dtype=np.int32)
         self._breakdown = np.zeros((n, MAX_PLAYERS, 4), dtype=np.int32)
+        self._interaction = np.zeros((n, MAX_PLAYERS, INTERACTION), dtype=np.int32)
         self._winners = np.zeros(n, dtype=np.int32)
         self._actions = np.zeros(n, dtype=np.int32)
         self._legal = np.zeros(n, dtype=np.int32)
@@ -120,6 +125,10 @@ class BatchEnv:
     def require_min_bid(self, slot: int, amount: int) -> None:
         """Seats of this slot open a delivery auction with at least `amount` (their whole cash if less)."""
         self.lib.cenv_set_min_bid(self.handle, slot, amount)
+
+    def require_max_price(self, slot: int, amount: int) -> None:
+        """Seats of this slot lay no container out in a lot that costs more than `amount`."""
+        self.lib.cenv_set_max_price(self.handle, slot, amount)
 
     def forbid_same_turn_repay(self, slot: int) -> None:
         """Seats of this slot may not repay a loan in a turn in which they requested one."""
@@ -182,6 +191,13 @@ class BatchEnv:
         bids, as deliverer or winning bidder) in the game so far."""
         self.lib.cenv_traded(self.handle, _ptr(self._traded, C.c_int))
         return self._traded
+
+    def interaction(self) -> np.ndarray:
+        """Per env and seat, counters of how the seat dealt with the others so far: containers bought from
+        opponents and their cost, containers sold to them and what they brought, delivery bids (and their
+        money, and those of at least $2), and the containers laid out in a lot of each price $1..$6."""
+        self.lib.cenv_interaction(self.handle, _ptr(self._interaction, C.c_int))
+        return self._interaction
 
     def decision_info(self):
         """Returns (legal, phase) per env: legal actions before thinning and the phase code, -1 if idle."""

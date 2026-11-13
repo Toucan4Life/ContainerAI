@@ -9,6 +9,7 @@ use container_engine::observation::Observation;
 pub mod broker;
 pub mod classic;
 pub mod consortium;
+pub mod dealer;
 pub mod features;
 pub mod heuristic;
 pub mod magnate;
@@ -48,7 +49,7 @@ pub struct OpponentInfo {
 }
 
 /// Every opponent that can be selected.
-pub const OPPONENTS: [OpponentInfo; 7] = [
+pub const OPPONENTS: [OpponentInfo; 8] = [
     OpponentInfo {
         id: random::ID,
         name: "Random",
@@ -72,6 +73,12 @@ pub const OPPONENTS: [OpponentInfo; 7] = [
         name: "Broker",
         description: "A net trained from scratch to win and to deal with its opponents. It bids at least $3 on every delivery, buys from opponents, never repays a loan the turn it takes it, and plays the action it rates best without repeating itself in an identical position. Weaker than Magnate.",
         elo: 2150,
+    },
+    OpponentInfo {
+        id: dealer::ID,
+        name: "Dealer",
+        description: "Broker trained further to deal, not only to win. It buys from opponents' factories and harbors, bids on their deals, and lists about four containers in ten at $3 or less, a price at which a buyer cannot lose, where Broker lists one in twenty. Same rules and about the same strength as Broker.",
+        elo: 2170,
     },
     OpponentInfo {
         id: classic::ID,
@@ -102,6 +109,7 @@ pub fn create(id: &str, seed: u64) -> Option<Box<dyn Opponent + Send>> {
         magnate::ID => Some(Box::new(magnate::new(seed))),
         consortium::ID => Some(Box::new(consortium::new(seed))),
         broker::ID => Some(Box::new(broker::new(seed))),
+        dealer::ID => Some(Box::new(dealer::new(seed))),
         classic::ID => Some(Box::new(classic::new(seed))),
         _ => None,
     }

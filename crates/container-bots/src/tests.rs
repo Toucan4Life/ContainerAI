@@ -114,6 +114,29 @@ fn broker_never_opens_a_delivery_auction_under_its_minimum_bid() {
 }
 
 #[test]
+fn dealer_never_opens_a_delivery_auction_under_its_minimum_bid() {
+    use container_engine::observation::PhaseView;
+    let mut opening_bids = 0;
+    for seed in 0..6 {
+        let mut game = Game::new(config(4, GameLength::Standard, seed)).unwrap();
+        let mut seats: Vec<_> = (0..4).map(|s| create("dealer", s).unwrap()).collect();
+        while !game.is_terminal() {
+            let viewer = game.current_player();
+            let obs = game.observation(viewer).unwrap();
+            let action = seats[viewer].choose(&obs, &game.legal_actions());
+            if let (PhaseView::Bid(b), Action::Bid(amount)) = (obs.phase, action) {
+                if !b.runoff {
+                    opening_bids += 1;
+                    assert!(amount >= 3.min(obs.players[viewer].cash.unwrap()), "bid {amount}");
+                }
+            }
+            game.apply(action).unwrap();
+        }
+    }
+    assert!(opening_bids > 0);
+}
+
+#[test]
 fn classic_never_calls_the_bank() {
     let mut turns = 0;
     for seed in 0..4 {

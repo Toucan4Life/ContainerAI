@@ -30,7 +30,7 @@ from typing import NamedTuple
 import numpy as np
 import torch
 
-from training.env import DONE, MAX_PLAYERS, STALLED, STANDARD, BatchEnv
+from training.env import DONE, INTERACTION, MAX_PLAYERS, STALLED, STANDARD, BatchEnv
 from training.model import PolicyNet, load_checkpoint
 from training.selfplay import Roller
 
@@ -202,6 +202,7 @@ def play(specs: Sequence[GameSpec], policies: Sequence[Policy], *, device: str |
     cols = {k: np.zeros(g_total, dtype=d) for k, d in (("status", np.int8), ("winners", np.int32), ("actions", np.int32))}
     scores = np.zeros((g_total, MAX_PLAYERS), dtype=np.int32)
     breakdown = np.zeros((g_total, MAX_PLAYERS, 4), dtype=np.int32)
+    interaction = np.zeros((g_total, MAX_PLAYERS, INTERACTION), dtype=np.int32)
     seen = np.zeros(g_total, dtype=bool)
     t0 = time.monotonic()
     try:
@@ -217,6 +218,7 @@ def play(specs: Sequence[GameSpec], policies: Sequence[Policy], *, device: str |
             cols["actions"][fin.gid] = fin.actions
             scores[fin.gid] = got
             breakdown[fin.gid] = fin.breakdown
+            interaction[fin.gid] = fin.interaction
             if log:
                 done = int(seen.sum())
                 rate = done / (time.monotonic() - t0)
@@ -243,6 +245,7 @@ def play(specs: Sequence[GameSpec], policies: Sequence[Policy], *, device: str |
         status=cols["status"], scores=scores, winners=cols["winners"], actions=cols["actions"], meta=meta,
     )
     rec.breakdown = breakdown  # cash, island, leftovers, loans per seat; a diagnostic, not saved
+    rec.interaction = interaction  # `BatchEnv.interaction` per seat; a diagnostic, not saved
     return rec
 
 

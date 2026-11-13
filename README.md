@@ -65,6 +65,7 @@ The crate `crates/container-bots` holds the computer opponents. An opponent impl
 | `simple` | Simple | 263 | The legal action with the highest fixed priority, and a random one among equals. It produces, loads the ship, delivers to the Island and buys cheap containers, and bids a quarter of its cash in delivery auctions. It takes a loan only at $0, repays one when it holds $25 or more, and never builds, calls the Bank or buys out. |
 | `merchant` | Merchant | 932 | Simple's priorities with 32 parameters tuned by evolution strategy in self-play (`arena` crate, `tune` binary): it also builds, borrows and bids by cargo. |
 | `broker` | Broker | 2150 | The net from `runs/scratch_constrained/final.pt`, embedded as `weights/broker.bin`, trained from scratch with `--no-same-turn-repay --min-bid 3 --min-trade 45 --scripted-share 0.7`. The bot keeps both rules: it bids at least $3 to open a delivery auction and never repays a loan the turn it takes it. Its rating is the trainer's final eval (1024 games), not `anchors rate`. |
+| `dealer` | Dealer | 2170 | The net from `runs/inter_B/final.pt`, embedded as `weights/dealer.bin`: Broker trained 45 more minutes in league self-play with `--interaction-weight 0.5`. Same two rules as Broker (bid at least $3 to open a delivery auction, no same-turn repay). It buys from opponents, bids on their deals, and lists about 4 containers in 10 at $3 or less. Its rating is the trainer's eval, not `anchors rate`. |
 | `magnate` | Magnate | 2280 | The net from `runs/defense_run2_vs_exploiter_30m/final.pt`, embedded as `weights/magnate.bin`. It plays the action it rates best and never repeats itself in an identical position (see [Stalls and memory safety](#stalls-and-memory-safety)). It beats Merchant about 99.9% of the time. |
 
 ```sh
@@ -641,9 +642,12 @@ Measured on Magnate (150 to 200 games, three nets plus a Merchant): about 120 bi
 | `--min-trade M` with `--penalty-lr` | A constraint on the money of the deliveries the seat takes part in: reward is the share beaten minus a penalty times the shortfall. It never bound (traded money was 92 against a target of 45). |
 | `--island-weight W` | Reward share for the points taken from the Island. |
 | `python -m training.audit_interaction` | The measurement: containers bought, purchases from the stand-in and from other nets, harbor sails, bids, mean bid, Bank bids, where the score comes from (cash, island, leftovers, loans), and the share of containers priced and bought per lot. `--stand-in trader` and `:classic` options. |
+| `--interaction-weight W` | Reward share for an interaction score: containers bought from opponents, bids of $2 or more on their deals, containers sold, and the share of containers listed at $3 or less (a leftover container is worth $3, so a buyer cannot lose at that price). The per-seat counters come from the env (`INTERACTION`, `BatchEnv.interaction()`). |
+| `--max-price P` | A hard rule: the seat never lays a container out in a lot dearer than $P. |
+| `python -m training.interplay` | Plays a net at every seat of mixed tables against Consortium, Magnate, Broker and `scratch_trade`: winner share with its fair share, containers bought, bids, sales, prices and the share listed at $3 or less. |
 | `anchors add` | `consortium` (2286) and `traders` (1907) are on the ladder. |
 
-Deployed bots: **Broker** (`--min-bid 3 --min-trade 45`, 2150) and **Classic** (`--classic`, 2230) are in the UI list
+Deployed bots: **Broker** (`--min-bid 3 --min-trade 45`, 2150), **Dealer** (Broker plus `--interaction-weight 0.5`, 2170) and **Classic** (`--classic`, 2230) are in the UI list
 and the arena, with their rules built into the bot (`Neural::with_min_bid`, `without_bank`, `without_same_turn_repay`).
 A net trained under a rule must be deployed under it.
 
@@ -682,6 +686,32 @@ Runs that did not help: `scratch_geo` (geometric mean 0.3, 2052), `scratch_geo70
   that is noise (256-game evals), part is that Simple, Merchant and Random are all beaten about 100% of the time so only three
   anchors discriminate (now six with `consortium` and `traders`). Compare nets in head-to-head games, with several seeds,
   before ranking them.
+
+#### Dealer: an interactive net that keeps its strength
+
+Broker, and every other net, laid out nearly all its containers in the top lots (94% of Broker's were priced above $3; a factory's
+top lot is $4, a harbor's $5 to $6), so it bought and bid but offered little that an opponent could take without risk. Dealer is
+Broker trained further with `--interaction-weight 0.5` (reward is half the winner-share reward, half the interaction score).
+`python -m training.interplay --games 100`, one net at every seat of mixed tables (winner share, fair share in brackets):
+
+| Table | Broker | Dealer | Dealer with `--max-price 3` |
+|---|---|---|---|
+| Consortium + Magnate | 0.58 (0.33) | 0.61 (0.33) | 0.10 |
+| Consortium + Magnate + Broker | 0.49 (0.25) | 0.48 (0.25) | 0.05 |
+| Consortium + Magnate + `scratch_trade` | n/a | 0.56 (0.25) | 0.07 |
+
+| | Broker | Dealer |
+|---|---|---|
+| Containers listed at $3 or less | 6% | 26 to 41% |
+| Containers bought per game (3p / 4p tables) | 9 to 14 | 8 to 12 |
+| Containers sold per game | 10 to 15 | 11 to 15 |
+
+- Dealer lists 4 to 7 times more containers at a price a buyer cannot lose at, and keeps Broker's winner share (±5 points, 100 games per seat).
+- Purchases did not increase: Dealer buys about as many containers as Broker. The gain is in what its opponents are offered.
+- The hard cap (every container at $3 or less) priced everything fairly and lost: ELO about 1980 against 2170 and a winner share of 0.05 to 0.10. A cap alone costs the strength; the soft reward reaches 40% fair pricing for free. The ratio of the two was not tuned, and one seed of each was run.
+- Against Merchant stand-ins Dealer's share is 0.28 (fair 0.25), as for Broker (0.30).
+- Fair pricing moved slowly under the soft reward (0.11 to 0.24 in 25 minutes, 0.38 to 0.41 in the final eval); a higher weight or longer run may raise it.
+- The island pair is not an exploit of Consortium: two `scratch_island` nets at a table with Consortium win 0.54 of the time, under the 0.67 their seats are worth. Broker and `scratch_trade` pairs beat it by plain strength (a single copy against two Consortiums takes 0.59).
 
 #### What is still open
 

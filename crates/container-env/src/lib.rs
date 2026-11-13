@@ -35,11 +35,50 @@ fn length_of(code: c_int) -> GameLength {
     }
 }
 
-/// Applies `action`, crediting both seats of a delivery that is sold to a player with its bid.
-fn apply(game: &mut Game, traded: &mut [i32; MAX_PLAYERS], action: Action) {
-    if let (Phase::Decide(d), Action::Accept(winner)) = (game.phase, action) {
-        traded[d.deliverer] += d.top as i32;
-        traded[winner] += d.top as i32;
+/// Counters per seat of how it deals with the others, in game order of the columns of `cenv_interaction`:
+/// containers bought from opponents and what they cost, containers sold to opponents and what they brought,
+/// delivery bids placed and their money, bids of at least `REAL_BID`, and the containers the seat laid out
+/// in a lot of each price ($1 to $6).
+pub const INTERACTION: usize = 16;
+const BOUGHT: usize = 0;
+const SPENT: usize = 1;
+const SOLD: usize = 2;
+const EARNED: usize = 3;
+const BIDS: usize = 4;
+const BID_MONEY: usize = 5;
+const REAL_BIDS: usize = 6;
+const PLACED_AT: usize = 7; // $1 is column 7, $6 is column 12
+/// A bid below this is a pass, not an offer for the cargo.
+const REAL_BID: u32 = 2;
+
+type Interaction = [[i32; INTERACTION]; MAX_PLAYERS];
+
+/// Applies `action`, crediting both seats of a delivery that is sold to a player with its bid, and counting
+/// the purchases, bids and prices of the seats.
+fn apply(game: &mut Game, traded: &mut [i32; MAX_PLAYERS], inter: &mut Interaction, action: Action) {
+    match (game.phase, action) {
+        (Phase::Decide(d), Action::Accept(winner)) => {
+            traded[d.deliverer] += d.top as i32;
+            traded[winner] += d.top as i32;
+        }
+        (Phase::Buy(b), Action::Buy { lot, .. }) => {
+            let buyer = game.state.active_player;
+            let price = b.district.lot_price(lot) as i32;
+            inter[buyer][BOUGHT] += 1;
+            inter[buyer][SPENT] += price;
+            inter[b.seller][SOLD] += 1;
+            inter[b.seller][EARNED] += price;
+        }
+        (Phase::Bid(b), Action::Bid(amount)) => {
+            inter[b.bidder][BIDS] += 1;
+            inter[b.bidder][BID_MONEY] += amount as i32;
+            inter[b.bidder][REAL_BIDS] += (amount >= REAL_BID) as i32;
+        }
+        (Phase::Arrange(a), Action::Place(lot)) => {
+            let price = a.district.lot_price(lot) as usize;
+            inter[a.owner][PLACED_AT + price - 1] += 1;
+        }
+        _ => {}
     }
     game.apply(action).expect("legal action");
 }
@@ -85,13 +124,16 @@ struct Rules {
     /// The slot that must bid at least `min_bid` (or all its cash, if less) in the first round of a delivery auction.
     min_bid: Option<i32>,
     min_bid_amount: u32,
+    /// The slot that may not lay a container out in a lot dearer than `max_price_amount`.
+    max_price: Option<i32>,
+    max_price_amount: u32,
 }
 
 impl Rules {
     /// Whether any rule binds the seats of this slot.
     fn bind(&self, kind: i32) -> bool {
         self.no_bank_all
-            || [self.no_bank, self.buy_at_harbor, self.no_same_turn_repay, self.min_bid].contains(&Some(kind))
+            || [self.no_bank, self.buy_at_harbor, self.no_same_turn_repay, self.min_bid, self.max_price].contains(&Some(kind))
     }
 }
 
@@ -106,6 +148,8 @@ struct Env {
     /// Per seat, the money of the player-to-player deliveries it took part in (the accepted bids), as
     /// deliverer or as the winning bidder.
     traded: [i32; MAX_PLAYERS],
+    /// Per seat, how it dealt with the others in the game so far (see `INTERACTION`).
+    inter: Interaction,
     /// Actions after which a running game is declared stalled.
     horizon: usize,
     players: usize,
@@ -124,6 +168,7 @@ impl Env {
             thinned: Vec::new(),
             actions: 0,
             traded: [0; MAX_PLAYERS],
+            inter: [[0; INTERACTION]; MAX_PLAYERS],
             horizon: STALL,
             players: 0,
             status: Status::Idle,
@@ -151,6 +196,7 @@ impl Env {
         self.teacher = create("merchant", seed ^ 0x7EAC4E5);
         self.actions = 0;
         self.traded = [0; MAX_PLAYERS];
+        self.inter = [[0; INTERACTION]; MAX_PLAYERS];
         self.players = players;
         self.status = Status::Idle;
     }
@@ -196,7 +242,7 @@ impl Env {
                 self.status = Status::Pending;
                 return;
             };
-            apply(game, &mut self.traded, action);
+            apply(game, &mut self.traded, &mut self.inter, action);
             self.actions += 1;
         }
     }
@@ -221,7 +267,7 @@ impl Env {
             return;
         }
         let action = self.legal[self.thinned[choice.min(self.thinned.len() - 1)]];
-        apply(self.game.as_mut().expect("game"), &mut self.traded, action);
+        apply(self.game.as_mut().expect("game"), &mut self.traded, &mut self.inter, action);
         self.actions += 1;
         self.status = Status::Idle;
     }
@@ -254,6 +300,11 @@ fn forbidden(rules: Rules, game: &Game, kind: i32, action: Action) -> bool {
             if !b.runoff && amount < rules.min_bid_amount.min(cash) {
                 return true;
             }
+        }
+    }
+    if let (Some(slot), Phase::Arrange(a), Action::Place(lot)) = (rules.max_price, game.phase, action) {
+        if slot == kind && a.district.lot_price(lot) > rules.max_price_amount {
+            return true;
         }
     }
     if rules.buy_at_harbor != Some(kind) {
@@ -377,6 +428,20 @@ pub unsafe extern "C" fn cenv_set_min_bid(b: *mut Batch, slot: c_int, amount: u3
     for env in &mut batch.envs {
         env.rules.min_bid = (slot >= 0).then_some(slot);
         env.rules.min_bid_amount = amount;
+    }
+}
+
+/// Seats of `slot` may not lay a container out in a lot that costs more than `amount` (unless every
+/// other way of laying it out is closed too).
+///
+/// # Safety
+/// `b` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cenv_set_max_price(b: *mut Batch, slot: c_int, amount: u32) {
+    let batch = unsafe { &mut *b };
+    for env in &mut batch.envs {
+        env.rules.max_price = (slot >= 0).then_some(slot);
+        env.rules.max_price_amount = amount;
     }
 }
 
@@ -561,6 +626,23 @@ pub unsafe extern "C" fn cenv_traded(b: *mut Batch, traded: *mut c_int) {
     for (i, env) in batch.envs.iter().enumerate() {
         for p in 0..MAX_PLAYERS {
             unsafe { *traded.add(i * MAX_PLAYERS + p) = env.traded[p] };
+        }
+    }
+}
+
+/// Writes for each env the interaction counters of every seat: `MAX_PLAYERS * INTERACTION` per env (see
+/// `INTERACTION` for the columns).
+///
+/// # Safety
+/// `b` is live; `out` holds `MAX_PLAYERS * INTERACTION` values per env.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cenv_interaction(b: *mut Batch, out: *mut c_int) {
+    let batch = unsafe { &*b };
+    for (i, env) in batch.envs.iter().enumerate() {
+        for p in 0..MAX_PLAYERS {
+            for k in 0..INTERACTION {
+                unsafe { *out.add((i * MAX_PLAYERS + p) * INTERACTION + k) = env.inter[p][k] };
+            }
         }
     }
 }
@@ -807,6 +889,52 @@ mod tests {
         }
         assert!(bids > 0, "random play should reach delivery auctions");
         assert_eq!(low, 0);
+    }
+
+    #[test]
+    fn a_slot_with_a_price_cap_lays_nothing_out_above_it_and_purchases_have_two_sides() {
+        let (mut places, mut dear, mut bought, mut top_lot) = (0, 0, 0, 0);
+        for cap in [0, 3] {
+            for seed in 0..20 {
+                let mut env = Env::new();
+                if cap > 0 {
+                    env.rules.max_price = Some(0);
+                    env.rules.max_price_amount = cap;
+                }
+                env.reset(3, seed, &[0, 0, 0]);
+                let mut step = 0usize;
+                loop {
+                    env.advance();
+                    if env.status != Status::Pending {
+                        break;
+                    }
+                    let game = env.game.as_ref().unwrap();
+                    if let Phase::Arrange(a) = game.phase {
+                        for &i in &env.thinned {
+                            if let Action::Place(lot) = env.legal[i] {
+                                if cap > 0 {
+                                    places += 1;
+                                    dear += (a.district.lot_price(lot) > cap) as usize;
+                                }
+                            }
+                        }
+                    }
+                    step += 1;
+                    env.step((step * 3 + seed as usize) % env.thinned.len());
+                }
+                let seat = |k: usize| env.inter.iter().map(|row| row[k]).sum::<i32>();
+                assert_eq!(seat(BOUGHT), seat(SOLD), "every purchase has a buyer and a seller");
+                assert_eq!(seat(SPENT), seat(EARNED));
+                bought += seat(BOUGHT);
+                if cap == 0 {
+                    top_lot += seat(PLACED_AT + 5);
+                }
+            }
+        }
+        assert!(places > 0, "random play should lay containers out");
+        assert_eq!(dear, 0);
+        assert!(bought > 0, "random play should buy from opponents");
+        assert!(top_lot > 0, "the counters see the dearest lot being used when nothing forbids it");
     }
 
     /// Plays random games with every seat a slot, and counts harbor arrivals that bought nothing.

@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use container_engine::action::Action;
 use container_engine::observation::{Observation, PhaseView};
+use container_engine::phase::Phase;
 use container_engine::rng::Rng;
 
 use crate::{Opponent, is_same_turn_repay};
@@ -153,6 +154,8 @@ pub struct Neural {
     no_same_turn_repay: bool,
     /// The least the net bids in the first round of a delivery auction (all its cash, if less).
     min_bid: u32,
+    /// The dearest lot, in dollars, the net lays a container out in (0 for no limit).
+    max_price: u32,
     /// Whether the net never sees a Bank call (starting or outbidding an auction).
     no_bank: bool,
 }
@@ -168,6 +171,7 @@ impl Neural {
             tried: HashMap::new(),
             no_same_turn_repay: false,
             min_bid: 0,
+            max_price: 0,
             no_bank: false,
         }
     }
@@ -195,6 +199,14 @@ impl Neural {
         self
     }
 
+    /// Takes laying a container out in a lot dearer than `amount` off the table, as `--max-price` does in
+    /// training, so that the net's containers are offered at a price someone may pay. A net trained with it
+    /// must play under it.
+    pub fn with_max_price(mut self, amount: u32) -> Self {
+        self.max_price = amount;
+        self
+    }
+
     /// Whether the net may not play `action` here, under the rules it was trained with.
     fn forbidden(&self, obs: &Observation, action: Action) -> bool {
         if self.no_bank && matches!(action, Action::StartAuction { .. } | Action::Outbid(_)) {
@@ -202,6 +214,11 @@ impl Neural {
         }
         if self.no_same_turn_repay && is_same_turn_repay(obs.turn.loans_requested, action) {
             return true;
+        }
+        if let (PhaseView::Open(Phase::Arrange(a)), Action::Place(lot)) = (obs.phase, action) {
+            if self.max_price > 0 && a.district.lot_price(lot) > self.max_price {
+                return true;
+            }
         }
         if let (PhaseView::Bid(b), Action::Bid(amount)) = (obs.phase, action) {
             let cash = obs.players[obs.viewer].cash.unwrap_or(u32::MAX);

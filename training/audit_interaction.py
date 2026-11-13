@@ -76,6 +76,8 @@ def audit(name: str, path: str, rules: dict, games: int, envs: int = 256, stand_
             env.ban_bank_all()
         if "min_bid" in rules:
             env.require_min_bid(E.SLOT_BASE, int(rules["min_bid"]))
+        if "max_price" in rules:
+            env.require_max_price(E.SLOT_BASE, int(rules["max_price"]))
         if "no_same_turn_repay" in rules:
             env.forbid_same_turn_repay(E.SLOT_BASE)
 
