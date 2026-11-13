@@ -6,6 +6,8 @@
 use container_engine::action::Action;
 use container_engine::observation::Observation;
 
+pub mod broker;
+pub mod classic;
 pub mod consortium;
 pub mod features;
 pub mod heuristic;
@@ -26,6 +28,13 @@ pub trait Opponent {
     fn choose(&mut self, obs: &Observation, legal: &[Action]) -> Action;
 }
 
+/// Whether `action` repays a loan on a turn in which its player has already requested one. The two
+/// cancel out, so a net that does both has only spent its free actions. Training can forbid it for
+/// a seat (`container-env`) and a deployed [`Neural`] can filter it, from the same rule.
+pub fn is_same_turn_repay(loans_requested: u8, action: Action) -> bool {
+    loans_requested > 0 && action == Action::RepayLoan
+}
+
 /// How the UI lists an opponent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OpponentInfo {
@@ -39,7 +48,7 @@ pub struct OpponentInfo {
 }
 
 /// Every opponent that can be selected.
-pub const OPPONENTS: [OpponentInfo; 5] = [
+pub const OPPONENTS: [OpponentInfo; 7] = [
     OpponentInfo {
         id: random::ID,
         name: "Random",
@@ -57,6 +66,18 @@ pub const OPPONENTS: [OpponentInfo; 5] = [
         name: "Merchant",
         description: "Simple's priorities, tuned in self-play: it also builds, borrows and bids by cargo.",
         elo: 932,
+    },
+    OpponentInfo {
+        id: broker::ID,
+        name: "Broker",
+        description: "A net trained from scratch to win and to deal with its opponents. It bids at least $3 on every delivery, buys from opponents, never repays a loan the turn it takes it, and plays the action it rates best without repeating itself in an identical position. Weaker than Magnate.",
+        elo: 2150,
+    },
+    OpponentInfo {
+        id: classic::ID,
+        name: "Classic",
+        description: "A net trained from scratch for the classic rule, in which nobody calls the Bank: it never starts or outbids a Bank auction, so it trades with its opponents instead. Never repays a loan the turn it takes it. Its rating is from its training evaluation, played against opponents that could not call the Bank either, so it is only roughly comparable.",
+        elo: 2230,
     },
     OpponentInfo {
         id: magnate::ID,
@@ -80,6 +101,8 @@ pub fn create(id: &str, seed: u64) -> Option<Box<dyn Opponent + Send>> {
         merchant::ID => Some(Box::new(Merchant::new(seed))),
         magnate::ID => Some(Box::new(magnate::new(seed))),
         consortium::ID => Some(Box::new(consortium::new(seed))),
+        broker::ID => Some(Box::new(broker::new(seed))),
+        classic::ID => Some(Box::new(classic::new(seed))),
         _ => None,
     }
 }

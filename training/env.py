@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-RANDOM, SIMPLE, MERCHANT = -1, -2, -3
+RANDOM, SIMPLE, MERCHANT, TRADER = -1, -2, -3, -4
 MAX_PLAYERS = 5
 IDLE, PENDING, DONE, STALLED = 0, 1, 2, 3
 SHORT, STANDARD, EXTENDED = 0, 1, 2
@@ -56,13 +56,18 @@ class BatchEnv:
         lib.cenv_reset_ex.argtypes = [C.c_void_p, C.c_size_t, C.c_size_t, C.c_uint64, C.c_int, C.POINTER(C.c_int)]
         lib.cenv_set_horizon.argtypes = [C.c_void_p, C.c_size_t]
         lib.cenv_results_ex.argtypes = [C.c_void_p] + [C.POINTER(C.c_int)] * 5
+        lib.cenv_set_min_bid.argtypes = [C.c_void_p, C.c_int, C.c_uint32]
+        lib.cenv_breakdown.argtypes = [C.c_void_p, C.POINTER(C.c_int)]
+        lib.cenv_traded.argtypes = [C.c_void_p, C.POINTER(C.c_int)]
         lib.cenv_decision_info.argtypes = [C.c_void_p, C.POINTER(C.c_int), C.POINTER(C.c_int)]
         lib.cenv_observe.argtypes = [
             C.c_void_p, C.POINTER(C.c_float), C.POINTER(C.c_float), C.POINTER(C.c_uint8),
             C.POINTER(C.c_int), C.POINTER(C.c_int),
         ]
         lib.cenv_ban_bank.argtypes = [C.c_void_p, C.c_int]
+        lib.cenv_ban_bank_all.argtypes = [C.c_void_p, C.c_int]
         lib.cenv_require_harbor_purchase.argtypes = [C.c_void_p, C.c_int]
+        lib.cenv_forbid_same_turn_repay.argtypes = [C.c_void_p, C.c_int]
         lib.cenv_step.argtypes = [C.c_void_p, C.POINTER(C.c_int)]
         lib.cenv_teacher.argtypes = [C.c_void_p, C.POINTER(C.c_int)]
         lib.cenv_results.argtypes = [C.c_void_p] + [C.POINTER(C.c_int)] * 3
@@ -82,6 +87,8 @@ class BatchEnv:
         self._status = np.zeros(n, dtype=np.int32)
         self._players = np.zeros(n, dtype=np.int32)
         self._scores = np.zeros((n, MAX_PLAYERS), dtype=np.int32)
+        self._traded = np.zeros((n, MAX_PLAYERS), dtype=np.int32)
+        self._breakdown = np.zeros((n, MAX_PLAYERS, 4), dtype=np.int32)
         self._winners = np.zeros(n, dtype=np.int32)
         self._actions = np.zeros(n, dtype=np.int32)
         self._legal = np.zeros(n, dtype=np.int32)
@@ -102,9 +109,21 @@ class BatchEnv:
         """Seats of this slot can no longer call the Bank (start or outbid an auction)."""
         self.lib.cenv_ban_bank(self.handle, slot)
 
+    def ban_bank_all(self, on: bool = True) -> None:
+        """Nobody at the table can call the Bank, scripted seats included (the classic rule)."""
+        self.lib.cenv_ban_bank_all(self.handle, int(on))
+
     def require_harbor_purchase(self, slot: int) -> None:
         """Seats of this slot must buy something whenever they sail to a harbor."""
         self.lib.cenv_require_harbor_purchase(self.handle, slot)
+
+    def require_min_bid(self, slot: int, amount: int) -> None:
+        """Seats of this slot open a delivery auction with at least `amount` (their whole cash if less)."""
+        self.lib.cenv_set_min_bid(self.handle, slot, amount)
+
+    def forbid_same_turn_repay(self, slot: int) -> None:
+        """Seats of this slot may not repay a loan in a turn in which they requested one."""
+        self.lib.cenv_forbid_same_turn_repay(self.handle, slot)
 
     def reset(self, i: int, players: int, seed: int, kinds: list[int], length: int = STANDARD) -> None:
         k = np.asarray(kinds[:players], dtype=np.int32)
@@ -152,6 +171,17 @@ class BatchEnv:
             _ptr(self._scores, C.c_int), _ptr(self._winners, C.c_int), _ptr(self._actions, C.c_int),
         )
         return self._status, self._players, self._scores, self._winners, self._actions
+
+    def breakdown(self) -> np.ndarray:
+        """Per env, seat, of finished games: cash, island, leftovers and loans (positive) of the final score."""
+        self.lib.cenv_breakdown(self.handle, _ptr(self._breakdown, C.c_int))
+        return self._breakdown
+
+    def traded(self) -> np.ndarray:
+        """Per env and seat, the money of the player-to-player deliveries the seat took part in (accepted
+        bids, as deliverer or winning bidder) in the game so far."""
+        self.lib.cenv_traded(self.handle, _ptr(self._traded, C.c_int))
+        return self._traded
 
     def decision_info(self):
         """Returns (legal, phase) per env: legal actions before thinning and the phase code, -1 if idle."""

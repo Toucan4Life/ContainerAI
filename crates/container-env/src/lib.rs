@@ -4,7 +4,7 @@
 //! answers, usually with a neural net. The calls go: `reset` the games, `advance` them to the next
 //! decision of a slot, `observe` what the slots see, then `step` with the choices and repeat.
 //!
-//! Seat kinds in `reset`: `-1` random, `-2` simple, `-3` merchant, `>= 0` a slot, whose number tells
+//! Seat kinds in `reset`: `-1` random, `-2` simple, `-3` merchant, `-4` trader (see `merchant::Trader`), `>= 0` a slot, whose number tells
 //! Python which policy answers.
 
 use std::os::raw::c_int;
@@ -12,7 +12,8 @@ use std::os::raw::c_int;
 use container_bots::features::{
     ACTION_DIM, MAX_ACTIONS, STATE_DIM, encode_action, encode_state, thin,
 };
-use container_bots::{Opponent, create};
+use container_bots::merchant::Merchant;
+use container_bots::{Opponent, create, is_same_turn_repay};
 use container_engine::action::{Action, District};
 use container_engine::config::{GameConfig, GameLength, MAX_PLAYERS, STALL_HORIZON};
 use container_engine::game::Game;
@@ -32,6 +33,15 @@ fn length_of(code: c_int) -> GameLength {
         2 => GameLength::Extended,
         _ => GameLength::Standard,
     }
+}
+
+/// Applies `action`, crediting both seats of a delivery that is sold to a player with its bid.
+fn apply(game: &mut Game, traded: &mut [i32; MAX_PLAYERS], action: Action) {
+    if let (Phase::Decide(d), Action::Accept(winner)) = (game.phase, action) {
+        traded[d.deliverer] += d.top as i32;
+        traded[winner] += d.top as i32;
+    }
+    game.apply(action).expect("legal action");
 }
 
 /// A small code for the phase of a pending decision, for audits: the Bank bid is split by what the
@@ -61,6 +71,30 @@ enum Status {
     Stalled,
 }
 
+/// The rules imposed on the seats of a slot. Each names the slot it binds, if any.
+#[derive(Clone, Copy, Default)]
+struct Rules {
+    /// The slot that may not call the Bank (start or outbid an auction).
+    no_bank: Option<i32>,
+    /// Nobody calls the Bank, whatever their kind: the classic rule.
+    no_bank_all: bool,
+    /// The slot that, on sailing to a harbor, must buy something there.
+    buy_at_harbor: Option<i32>,
+    /// The slot that may not repay a loan in a turn in which it requested one.
+    no_same_turn_repay: Option<i32>,
+    /// The slot that must bid at least `min_bid` (or all its cash, if less) in the first round of a delivery auction.
+    min_bid: Option<i32>,
+    min_bid_amount: u32,
+}
+
+impl Rules {
+    /// Whether any rule binds the seats of this slot.
+    fn bind(&self, kind: i32) -> bool {
+        self.no_bank_all
+            || [self.no_bank, self.buy_at_harbor, self.no_same_turn_repay, self.min_bid].contains(&Some(kind))
+    }
+}
+
 struct Env {
     game: Option<Game>,
     kinds: [i32; MAX_PLAYERS],
@@ -69,14 +103,14 @@ struct Env {
     legal: Vec<Action>,
     thinned: Vec<usize>,
     actions: usize,
+    /// Per seat, the money of the player-to-player deliveries it took part in (the accepted bids), as
+    /// deliverer or as the winning bidder.
+    traded: [i32; MAX_PLAYERS],
     /// Actions after which a running game is declared stalled.
     horizon: usize,
     players: usize,
     status: Status,
-    /// The slot that may not call the Bank (start or outbid an auction), if any.
-    no_bank: Option<i32>,
-    /// The slot that, on sailing to a harbor, must buy something there.
-    buy_at_harbor: Option<i32>,
+    rules: Rules,
 }
 
 impl Env {
@@ -89,11 +123,11 @@ impl Env {
             legal: Vec::new(),
             thinned: Vec::new(),
             actions: 0,
+            traded: [0; MAX_PLAYERS],
             horizon: STALL,
             players: 0,
             status: Status::Idle,
-            no_bank: None,
-            buy_at_harbor: None,
+            rules: Rules::default(),
         }
     }
 
@@ -110,11 +144,13 @@ impl Env {
                 -1 => create("random", seed ^ (seat as u64 + 1)),
                 -2 => create("simple", seed ^ (seat as u64 + 1)),
                 -3 => create("merchant", seed ^ (seat as u64 + 1)),
+                -4 => Some(Box::new(Merchant::trader(seed ^ (seat as u64 + 1))) as Box<dyn Opponent + Send>),
                 _ => None,
             })
             .collect();
         self.teacher = create("merchant", seed ^ 0x7EAC4E5);
         self.actions = 0;
+        self.traded = [0; MAX_PLAYERS];
         self.players = players;
         self.status = Status::Idle;
     }
@@ -136,9 +172,9 @@ impl Env {
             }
             let seat = game.current_player();
             let mut legal = game.legal_actions();
-            let rules = (self.no_bank, self.buy_at_harbor);
             let kind = self.kinds[seat];
-            if rules.0 == Some(kind) || rules.1 == Some(kind) {
+            if self.rules.bind(kind) {
+                let rules = self.rules;
                 let allowed: Vec<Action> = legal
                     .iter()
                     .copied()
@@ -160,7 +196,7 @@ impl Env {
                 self.status = Status::Pending;
                 return;
             };
-            game.apply(action).expect("legal action");
+            apply(game, &mut self.traded, action);
             self.actions += 1;
         }
     }
@@ -185,7 +221,7 @@ impl Env {
             return;
         }
         let action = self.legal[self.thinned[choice.min(self.thinned.len() - 1)]];
-        self.game.as_mut().expect("game").apply(action).expect("legal action");
+        apply(self.game.as_mut().expect("game"), &mut self.traded, action);
         self.actions += 1;
         self.status = Status::Idle;
     }
@@ -205,11 +241,22 @@ impl Env {
 }
 
 /// Whether the rules imposed on this slot rule `action` out.
-fn forbidden((no_bank, buy_at_harbor): (Option<i32>, Option<i32>), game: &Game, kind: i32, action: Action) -> bool {
-    if no_bank == Some(kind) && matches!(action, Action::StartAuction { .. } | Action::Outbid(_)) {
+fn forbidden(rules: Rules, game: &Game, kind: i32, action: Action) -> bool {
+    if (rules.no_bank_all || rules.no_bank == Some(kind)) && matches!(action, Action::StartAuction { .. } | Action::Outbid(_)) {
         return true;
     }
-    if buy_at_harbor != Some(kind) {
+    if rules.no_same_turn_repay == Some(kind) && is_same_turn_repay(game.turn.loans_requested, action) {
+        return true;
+    }
+    if rules.min_bid == Some(kind) {
+        if let (Phase::Bid(b), Action::Bid(amount)) = (game.phase, action) {
+            let cash = game.state.players[b.bidder].cash;
+            if !b.runoff && amount < rules.min_bid_amount.min(cash) {
+                return true;
+            }
+        }
+    }
+    if rules.buy_at_harbor != Some(kind) {
         return false;
     }
     match (game.phase, action) {
@@ -276,7 +323,19 @@ pub unsafe extern "C" fn cenv_ban_bank(b: *mut Batch, slot: c_int) {
     let batch = unsafe { &mut *b };
     let ban = (slot >= 0).then_some(slot);
     for env in &mut batch.envs {
-        env.no_bank = ban;
+        env.rules.no_bank = ban;
+    }
+}
+
+/// Forbids every seat, scripted or not, to call the Bank (the classic rule); `on == 0` lifts it.
+///
+/// # Safety
+/// `b` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cenv_ban_bank_all(b: *mut Batch, on: c_int) {
+    let batch = unsafe { &mut *b };
+    for env in &mut batch.envs {
+        env.rules.no_bank_all = on != 0;
     }
 }
 
@@ -290,7 +349,34 @@ pub unsafe extern "C" fn cenv_require_harbor_purchase(b: *mut Batch, slot: c_int
     let batch = unsafe { &mut *b };
     let rule = (slot >= 0).then_some(slot);
     for env in &mut batch.envs {
-        env.buy_at_harbor = rule;
+        env.rules.buy_at_harbor = rule;
+    }
+}
+
+/// Forbids the seats of slot `slot` to repay a loan in a turn in which they requested one, in every
+/// env; a negative `slot` lifts the rule.
+///
+/// # Safety
+/// `b` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cenv_forbid_same_turn_repay(b: *mut Batch, slot: c_int) {
+    let batch = unsafe { &mut *b };
+    let rule = (slot >= 0).then_some(slot);
+    for env in &mut batch.envs {
+        env.rules.no_same_turn_repay = rule;
+    }
+}
+
+/// Seats of `slot` must open a delivery auction with a bid of at least `amount` (their whole cash if less).
+///
+/// # Safety
+/// `b` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cenv_set_min_bid(b: *mut Batch, slot: c_int, amount: u32) {
+    let batch = unsafe { &mut *b };
+    for env in &mut batch.envs {
+        env.rules.min_bid = (slot >= 0).then_some(slot);
+        env.rules.min_bid_amount = amount;
     }
 }
 
@@ -465,6 +551,45 @@ pub unsafe extern "C" fn cenv_results_ex(
     unsafe { results(b, status, players, scores, winners, actions) }
 }
 
+/// Writes for each env the money of the deliveries each seat sold or won so far: `MAX_PLAYERS` per env.
+///
+/// # Safety
+/// `b` is live; `traded` holds `MAX_PLAYERS` values per env.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cenv_traded(b: *mut Batch, traded: *mut c_int) {
+    let batch = unsafe { &*b };
+    for (i, env) in batch.envs.iter().enumerate() {
+        for p in 0..MAX_PLAYERS {
+            unsafe { *traded.add(i * MAX_PLAYERS + p) = env.traded[p] };
+        }
+    }
+}
+
+/// Writes for each env the final score of every seat as cash, island, leftovers and loans (a positive
+/// amount, as in `ScoreBreakdown`): `MAX_PLAYERS * 4` per env, zero unless the game is done.
+///
+/// # Safety
+/// `b` is live; `out` holds `MAX_PLAYERS * 4` values per env.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cenv_breakdown(b: *mut Batch, out: *mut c_int) {
+    let batch = unsafe { &*b };
+    for (i, env) in batch.envs.iter().enumerate() {
+        let results = match env.status {
+            Status::Done => env.game.as_ref().and_then(|g| g.results()),
+            _ => None,
+        };
+        for p in 0..MAX_PLAYERS {
+            let parts = match results.as_ref().and_then(|r| r.scores.get(p)) {
+                Some(sc) => [sc.cash as c_int, sc.island as c_int, sc.leftovers as c_int, sc.loans as c_int],
+                None => [0; 4],
+            };
+            for (k, v) in parts.into_iter().enumerate() {
+                unsafe { *out.add((i * MAX_PLAYERS + p) * 4 + k) = v };
+            }
+        }
+    }
+}
+
 /// Writes for each env with a pending decision the number of legal actions before thinning and a
 /// phase code (see `phase_code`); -1 in both where nothing is pending.
 ///
@@ -539,7 +664,7 @@ mod tests {
         let mut offers = 0;
         for seed in 0..20 {
             let mut env = Env::new();
-            env.no_bank = no_bank;
+            env.rules.no_bank = no_bank;
             env.reset(3, seed, &[0, 0, 0]);
             loop {
                 env.advance();
@@ -560,12 +685,136 @@ mod tests {
         assert_eq!(bank_offers(Some(0)), 0);
     }
 
+    #[test]
+    fn the_classic_rule_stops_scripted_seats_calling_the_bank_too() {
+        let cash_taken = |classic: bool| {
+            let mut taken = 0;
+            for seed in 0..10 {
+                let mut env = Env::new();
+                env.rules.no_bank_all = classic;
+                env.reset(4, seed, &[-3, -3, -3, -3]);
+                let before = env.game.as_ref().unwrap().state.bank.cash_lots;
+                play_out(&mut env, 1);
+                let after = env.game.as_ref().unwrap().state.bank.cash_lots;
+                taken += usize::from(before != after);
+            }
+            taken
+        };
+        assert!(cash_taken(false) > 0, "merchants call the Bank");
+        assert_eq!(cash_taken(true), 0);
+    }
+
+    /// Plays random games with every seat a slot, and counts the decisions that offered a repayment:
+    /// in a turn that had already requested a loan, and in all.
+    fn repay_offers(rule: Option<i32>) -> (usize, usize) {
+        let (mut same_turn, mut all) = (0, 0);
+        for seed in 0..30 {
+            let mut env = Env::new();
+            env.rules.no_same_turn_repay = rule;
+            env.reset(3, seed, &[0, 0, 0]);
+            loop {
+                env.advance();
+                if env.status != Status::Pending {
+                    break;
+                }
+                let requested = env.game.as_ref().unwrap().turn.loans_requested > 0;
+                let repays = env.thinned.iter().filter(|&&i| env.legal[i] == Action::RepayLoan).count();
+                all += repays;
+                if requested {
+                    same_turn += repays;
+                }
+                env.step((env.actions * 7 + seed as usize) % env.thinned.len());
+            }
+        }
+        (same_turn, all)
+    }
+
+    #[test]
+    fn a_slot_with_the_repay_rule_is_never_offered_to_repay_a_loan_it_just_requested() {
+        let (same_turn, all) = repay_offers(None);
+        assert!(same_turn > 0, "random play should be able to repay in the turn it borrowed");
+        let (same_turn, kept) = repay_offers(Some(0));
+        assert_eq!(same_turn, 0);
+        assert!(kept > 0, "the rule must still allow repaying in a later turn");
+        assert!(kept <= all);
+    }
+
+    #[test]
+    fn a_sold_delivery_credits_its_deliverer_and_its_winning_bidder_with_the_bid() {
+        let (mut sold, mut games_with_trade) = (0, 0);
+        for seed in 0..20 {
+            let mut env = Env::new();
+            env.reset(3, seed, &[0, 0, 0]);
+            let mut step = 0usize;
+            loop {
+                env.advance();
+                if env.status != Status::Pending {
+                    break;
+                }
+                let before = env.traded;
+                let accepted = match env.game.as_ref().unwrap().phase {
+                    Phase::Decide(d) => Some(d.top as i32),
+                    _ => None,
+                };
+                step += 1;
+                env.step((step * 5 + seed as usize) % env.thinned.len());
+                let gain: i32 = (0..MAX_PLAYERS).map(|p| env.traded[p] - before[p]).sum();
+                match accepted {
+                    Some(top) => assert!(gain == 0 || gain == 2 * top, "an accepted bid credits two seats"),
+                    None => assert_eq!(gain, 0),
+                }
+                sold += (gain > 0) as usize;
+            }
+            games_with_trade += (env.traded.iter().sum::<i32>() > 0) as usize;
+            assert_eq!(env.traded[3..], [0; MAX_PLAYERS - 3]);
+        }
+        assert!(sold > 0 && games_with_trade > 0, "random play should sell some deliveries to players");
+    }
+
+    #[test]
+    fn a_slot_with_a_minimum_bid_never_opens_an_auction_below_it() {
+        let (mut bids, mut low) = (0, 0);
+        for min in [0, 3] {
+            for seed in 0..20 {
+                let mut env = Env::new();
+                if min > 0 {
+                    env.rules.min_bid = Some(0);
+                    env.rules.min_bid_amount = min;
+                }
+                env.reset(3, seed, &[0, 0, 0]);
+                let mut step = 0usize;
+                loop {
+                    env.advance();
+                    if env.status != Status::Pending {
+                        break;
+                    }
+                    let game = env.game.as_ref().unwrap();
+                    if let Phase::Bid(b) = game.phase {
+                        let cash = game.state.players[b.bidder].cash;
+                        for &i in &env.thinned {
+                            if let Action::Bid(a) = env.legal[i] {
+                                if min > 0 && !b.runoff {
+                                    bids += 1;
+                                    low += (a < min.min(cash)) as usize;
+                                }
+                            }
+                        }
+                    }
+                    step += 1;
+                    env.step((step * 3 + seed as usize) % env.thinned.len());
+                }
+            }
+        }
+        assert!(bids > 0, "random play should reach delivery auctions");
+        assert_eq!(low, 0);
+    }
+
     /// Plays random games with every seat a slot, and counts harbor arrivals that bought nothing.
     fn empty_harbor_visits(rule: Option<i32>) -> (usize, usize) {
         let (mut visits, mut empty) = (0, 0);
         for seed in 0..30 {
             let mut env = Env::new();
-            env.buy_at_harbor = rule;
+            env.rules.buy_at_harbor = rule;
             env.reset(3, seed, &[0, 0, 0]);
             let mut step = 0usize;
             loop {
@@ -609,7 +858,7 @@ mod tests {
     fn the_harbor_rule_forbids_declining_the_free_purchase() {
         for seed in 0..30 {
             let mut env = Env::new();
-            env.buy_at_harbor = Some(0);
+            env.rules.buy_at_harbor = Some(0);
             env.reset(3, seed, &[0, 0, 0]);
             let mut step = 0usize;
             loop {
@@ -659,6 +908,18 @@ mod tests {
         play_out(&mut env, 1);
         assert_eq!(env.status, Status::Done, "merchants finish well within the default horizon");
         assert!(env.actions < STALL);
+    }
+
+    #[test]
+    fn traders_finish_their_games_at_every_table_size() {
+        for players in 3..=5 {
+            for seed in 0..10 {
+                let mut env = Env::new();
+                env.reset(players, seed, &vec![-4; players]);
+                play_out(&mut env, 1);
+                assert_eq!(env.status, Status::Done, "{players} traders, seed {seed}");
+            }
+        }
     }
 
     #[test]

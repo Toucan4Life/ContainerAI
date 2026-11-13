@@ -1,8 +1,10 @@
 {
+  "consortium": 2285.9,
   "exploit_run2": 2174.4,
   "merchant": 932.0,
   "random": 0.0,
   "run1": 2172.8,
   "run2": 2239.0,
-  "simple": 262.6
+  "simple": 262.6,
+  "traders": 1906.8
 }

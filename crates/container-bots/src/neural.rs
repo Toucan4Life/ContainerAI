@@ -8,10 +8,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use container_engine::action::Action;
-use container_engine::observation::Observation;
+use container_engine::observation::{Observation, PhaseView};
 use container_engine::rng::Rng;
 
-use crate::Opponent;
+use crate::{Opponent, is_same_turn_repay};
 use crate::features::{ACTION_DIM, MAX_ACTIONS, STATE_DIM, encode_action, encode_state, thin};
 
 const MAGIC: &[u8; 4] = b"CNTW";
@@ -149,6 +149,12 @@ pub struct Neural {
     temperature: f32,
     /// For each input a greedy net has met, a bit for every action already played from it.
     tried: HashMap<u64, u64>,
+    /// Whether the net never sees a repayment on a turn it requested a loan (see [`is_same_turn_repay`]).
+    no_same_turn_repay: bool,
+    /// The least the net bids in the first round of a delivery auction (all its cash, if less).
+    min_bid: u32,
+    /// Whether the net never sees a Bank call (starting or outbidding an auction).
+    no_bank: bool,
 }
 
 impl Neural {
@@ -160,7 +166,48 @@ impl Neural {
             rng: Rng::new(seed),
             temperature,
             tried: HashMap::new(),
+            no_same_turn_repay: false,
+            min_bid: 0,
+            no_bank: false,
         }
+    }
+
+    /// Takes repaying a loan off the table on a turn in which the net has requested one. A net
+    /// trained with `--no-same-turn-repay` must play under this filter; one that was not would keep
+    /// the loans it took, as it counts on repaying them.
+    pub fn without_same_turn_repay(mut self) -> Self {
+        self.no_same_turn_repay = true;
+        self
+    }
+
+    /// Takes calling the Bank off the table, as `--classic` does in training. A net trained under it
+    /// has never met the Bank, so it must play under the same rule. The engine still allows the call
+    /// to the other seats.
+    pub fn without_bank(mut self) -> Self {
+        self.no_bank = true;
+        self
+    }
+
+    /// Takes bids under `amount` off the table in the first round of a delivery auction, as
+    /// `--min-bid` does in training. A net trained with it must play under it.
+    pub fn with_min_bid(mut self, amount: u32) -> Self {
+        self.min_bid = amount;
+        self
+    }
+
+    /// Whether the net may not play `action` here, under the rules it was trained with.
+    fn forbidden(&self, obs: &Observation, action: Action) -> bool {
+        if self.no_bank && matches!(action, Action::StartAuction { .. } | Action::Outbid(_)) {
+            return true;
+        }
+        if self.no_same_turn_repay && is_same_turn_repay(obs.turn.loans_requested, action) {
+            return true;
+        }
+        if let (PhaseView::Bid(b), Action::Bid(amount)) = (obs.phase, action) {
+            let cash = obs.players[obs.viewer].cash.unwrap_or(u32::MAX);
+            return !b.runoff && amount < self.min_bid.min(cash);
+        }
+        false
     }
 
     /// The best-scoring action not yet played from this input. Once all of them have been played,
@@ -197,6 +244,15 @@ fn fingerprint(state: &[f32], acts: &[f32]) -> u64 {
 
 impl Opponent for Neural {
     fn choose(&mut self, obs: &Observation, legal: &[Action]) -> Action {
+        let barred = |&a: &Action| self.forbidden(obs, a);
+        let allowed: Vec<Action>;
+        let legal = if legal.iter().any(barred) {
+            allowed = legal.iter().copied().filter(|a| !barred(a)).collect();
+            // Never leave the seat without a move.
+            if allowed.is_empty() { legal } else { &allowed }
+        } else {
+            legal
+        };
         let kept = thin(legal.len());
         let mut state = vec![0.0; STATE_DIM];
         encode_state(obs, &mut state);
@@ -280,6 +336,24 @@ mod tests {
             played.push(next);
         }
         assert_eq!(bot.choose(&obs, &legal), first, "every action has had its turn");
+    }
+
+    #[test]
+    fn a_net_without_same_turn_repay_never_repays_a_loan_it_requested_that_turn() {
+        fn picks(mut bot: Neural, obs: &Observation, legal: &[Action]) -> Vec<Action> {
+            (0..legal.len()).map(|_| bot.choose(obs, legal)).collect()
+        }
+        let net = Arc::new(Net::from_bytes(WEIGHTS).unwrap());
+        let (mut obs, mut legal) = opening();
+        legal.push(Action::RepayLoan);
+        obs.turn.loans_requested = 1;
+        let plain = picks(Neural::new(net.clone(), 0, 0.0), &obs, &legal);
+        assert!(plain.contains(&Action::RepayLoan), "the guard plays every action in turn");
+        let filtered = picks(Neural::new(net.clone(), 0, 0.0).without_same_turn_repay(), &obs, &legal);
+        assert!(!filtered.contains(&Action::RepayLoan));
+        obs.turn.loans_requested = 0;
+        let allowed = picks(Neural::new(net, 0, 0.0).without_same_turn_repay(), &obs, &legal);
+        assert!(allowed.contains(&Action::RepayLoan), "nothing was requested, so repaying is fine");
     }
 
     #[test]

@@ -64,6 +64,7 @@ The crate `crates/container-bots` holds the computer opponents. An opponent impl
 | `random` | Random | 0 | Any legal action, chosen at random. |
 | `simple` | Simple | 263 | The legal action with the highest fixed priority, and a random one among equals. It produces, loads the ship, delivers to the Island and buys cheap containers, and bids a quarter of its cash in delivery auctions. It takes a loan only at $0, repays one when it holds $25 or more, and never builds, calls the Bank or buys out. |
 | `merchant` | Merchant | 932 | Simple's priorities with 32 parameters tuned by evolution strategy in self-play (`arena` crate, `tune` binary): it also builds, borrows and bids by cargo. |
+| `broker` | Broker | 2150 | The net from `runs/scratch_constrained/final.pt`, embedded as `weights/broker.bin`, trained from scratch with `--no-same-turn-repay --min-bid 3 --min-trade 45 --scripted-share 0.7`. The bot keeps both rules: it bids at least $3 to open a delivery auction and never repays a loan the turn it takes it. Its rating is the trainer's final eval (1024 games), not `anchors rate`. |
 | `magnate` | Magnate | 2280 | The net from `runs/defense_run2_vs_exploiter_30m/final.pt`, embedded as `weights/magnate.bin`. It plays the action it rates best and never repeats itself in an identical position (see [Stalls and memory safety](#stalls-and-memory-safety)). It beats Merchant about 99.9% of the time. |
 
 ```sh
@@ -168,9 +169,11 @@ anchored at Random = 0 and are only meaningful relative to the opponents used du
 | Random | 0 | Fixed rating anchor. |
 | Simple | 263 | Scripted-bot arena evaluation. |
 | Merchant | 932 | Scripted-bot arena evaluation. |
+| `traders` | 1907 | 3,000-game ladder rating; `runs/scratch_traders` (from scratch, against price-sensitive traders). Rated and played unrestricted, without its min-bid and repay rules. |
 | `run1` | 2173 | 3,000 anchor-rating games; beats Merchant about 99.9%. |
 | `exploit_run2` | 2174 | 3,000-game ladder rating; specialist exploiter of `run2`. |
 | `run2` | 2239 | 3,000 anchor-rating games; beats `run1` 59.8%. |
+| `consortium` | 2286 | 3,000 anchor-rating games, from `populations/psro/psro08.pt`; plain greedy, without the UI's repetition guard (2.4% stalls). |
 
 The strongest nets so far are not on the ladder: `defense_run2_vs_exploiter_30m` (the UI's Magnate,
 about 2280) and `control_run2_30m` (about 2279) are tied; see the control experiment and
@@ -463,7 +466,7 @@ from 6,000 Rust-arena games of Consortium against Magnate at 3-5 seats (seed 21,
 winner share). The ladder protocol cannot show the difference (10,000 games, greedy and unguarded, rates psro08 2280.8 with 3%
 stalls, because the anchor field is saturated), so the label is a head-to-head figure on the ladder's scale, not a ladder rating.
 
-#### Restricted learners (`--no-call-bank`, `--buy-at-harbor`) and throughput
+#### Restricted learners (`--no-call-bank`, `--buy-at-harbor`, `--no-same-turn-repay`) and throughput
 
 Training flags (also on `anchors rate`) restrict only the learner seat, in training and in the
 trainer's evals; scripted bots and anchors play normally. They are **not** enforced in the web
@@ -473,8 +476,42 @@ UI bots, so a net trained this way needs the same filter in its Rust bot before 
   and buy-outs stay legal.
 - `--buy-at-harbor`: forbids sailing to a harbor where nothing can be bought, and forbids
   `DoneBuying` with an empty purchase list at a harbor.
+- `--no-same-turn-repay`: removes `RepayLoan` in a turn in which the seat has requested a loan, so a request
+  is no longer free. Loans a bidder takes on another seat's turn do not count. A deployed net trained with it
+  plays under `Neural::without_same_turn_repay`; an unretrained net must not, as it keeps the loans it took.
 - If a filter would leave no legal move it is ignored for that decision.
 - Ratings under restrictions are not comparable to unrestricted ones.
+
+`--welfare-weight W` (0..1, default 0) moves that share of the learner's reward from its own rank and
+score margin to `selfplay.table_welfare`: the table's mean final score, the same for every seat. A seat
+that hands money to another gains nothing from it by itself, because the total is unchanged; what raises
+it is the supply's subsidy on accepted delivery bids and containers landed on the Island, so it should favour
+higher bids and fewer wasted moves (not measured yet). Only the training reward changes: evals and ratings are as before.
+Scripted bots and anchors do not share the goal, so tables of the learner's own copies are where it can
+pay off. Which `W` gives a bot that is worth playing against is not known yet; sweep it.
+
+Interaction options (measured with `python -m training.audit_interaction`, see its docstring; in 30-minute
+scratch runs the blended rewards below did little, so treat them as experiments):
+
+- `--win-only`: the reward is only the share of opponents beaten, with no margin term.
+- `--geomean-weight G`, `--trade-weight T`: that share blended with the table's geometric mean score, or with the
+  money of the player-to-player deliveries the seat took part in (`selfplay.trade_term`).
+- `--min-bid N`: the learner opens every delivery auction with at least N (all its cash if less). Not in the
+  Rust bot yet.
+- `--min-trade M` (with `--penalty-lr`): a constraint instead of a weight. The reward is the share beaten
+  minus a penalty times the seat's relative shortfall below M of traded money; the penalty rises while the
+  learners fall short and falls when they exceed it (logged as `penalty` and `traded`).
+- `--scripted-share P`: the chance that an opponent seat in a league table is a scripted bot, standing in for
+  a human, instead of a frozen copy of the learner.
+- `--trader-share P`: the chance that a scripted seat is a trader (seat kind `-4`, `merchant::Trader`): Merchant that
+  pays only up to $2-$4 per container (fixed per game) and prices its own around one lot ($1-$4). Merchant buys at any
+  price and sells at $1, which teaches a net that pricing at the maximum costs nothing. `audit_interaction --stand-in trader`
+  audits against one.
+- `--island-weight W`: that share of the reward is the points the seat's score took from the Island (`selfplay.island_term`,
+  1 at 80 points), the rest the share of opponents beaten. Exclusive with the other reward options.
+- `--classic`: the classic rule. Nobody at the table may call the Bank (scripted bots and frozen copies included), so
+  `--no-call-bank`'s learner-only ban is not needed. Ladder ELOs were measured with the Bank open, so read the win rates.
+  `audit_interaction` takes `:classic` after a net's path.
 
 Runs: `nobank_magnate_30m` (init Magnate, Bank banned only, stopped at 751 s because it stalled,
 ELO ~2219) and a chain that started from nothing (seed 7, no `--init`) with both rules. Each link
@@ -557,6 +594,109 @@ on top of the net. Each requires a controlled before/after comparison and should
 after it is measured. The equilibrium work suggests an order: a better-trained best-response oracle (the
 learning-rate schedule first; longer budgets and several seeds are still open) should come before any larger net,
 because the schedule alone moved the measured gain from +0.006 to +0.098 against the same opponent (spec section 11).
+
+### A strong AI that interacts with its opponents
+
+The goal: a net that is very strong and also plays with the table, meaning it buys containers from opponents'
+factories and harbors, pays fair prices for deliveries, and delivers to the Island, instead of living off the
+Bank. This section collects what was measured on the way. Every run below is **one 30-minute run with no noise
+estimate**; ELO gaps under about 100 are not significant (one run's successive 256-game evals moved 1943 to 2188).
+The `runs/` outputs are untracked.
+
+#### The behavior to fix
+
+Magnate and Consortium all play one way:
+
+- they price their own containers in the top lots so nobody buys them, and take cash and containers from the Bank;
+- they score from cash in hand and from containers left at the Bank, and mostly ignore the Island;
+- they bid $1.5 to $2 on a delivery, because the bidder only gets containers (the deliverer gets twice the bid, and the
+  equal amount is minted), so a bid is a small price;
+- half their turns are idle harbor sails, and they took a loan and repaid it the same turn.
+
+Measured on Magnate (150 to 200 games, three nets plus a Merchant): about 120 bids on players and 88 Bank bids per game,
+15.6 containers bought, and a score of cash 57 / island 25 / leftovers 21.
+
+#### Why training does not fix it by itself
+
+- **The opponents teach it.** The scripted bots and frozen copies never offer a cheap container: Merchant buys at any price
+  and sells at $1, and nets price high. A $1 lot is an input the nets have almost never seen. In 40 games per net a $1 lot was
+  offered 0 times to Broker, 3 to Magnate and 12 to Consortium, and none was taken. Against Merchants under the classic rule
+  (which sell at $1) the classic net took 13.5% of $1 offers and 16.6% of dearer ones, so it does not prefer cheap. Consortium
+  took 8.2% and 4.6%.
+- **Reward blends change little.** A welfare term (table mean), a geometric-mean term, win-only and a trade bonus all left
+  the engagement about as it was (about 120 bids per game, mean bid $1.5 to $2.5). The welfare term cannot be attributed to
+  one seat's action, and the money minted is only about $2 per accepted delivery.
+- **Same-turn repay banned, loans gone.** `--no-same-turn-repay` removes the take-and-repay pattern. The retrained nets
+  hold no loans at the end. The Rust bot needs the same filter (`Neural::without_same_turn_repay`).
+
+#### Tools added
+
+| Option | What it does |
+|---|---|
+| `--no-same-turn-repay`, `--min-bid N` | Hard action masks on the learner: no repayment in a turn that took a loan; a delivery auction opens with a bid of at least N (all its cash, if less). |
+| `--classic` | Nobody at the table may call the Bank, scripted seats and frozen copies included. |
+| `--trader-share P` | Scripted opponents that are traders (seat kind `-4`, `merchant::Trader`): Merchant that pays only $2 to $4 per container and prices its own around one lot. |
+| `--scripted-share P` | How often an opponent seat is a scripted bot (a human stand-in) instead of a frozen copy. |
+| `--win-only`, `--welfare-weight`, `--geomean-weight`, `--trade-weight` | Reward blends. Win-only buys the most containers; the trade bonus raises bids. |
+| `--min-trade M` with `--penalty-lr` | A constraint on the money of the deliveries the seat takes part in: reward is the share beaten minus a penalty times the shortfall. It never bound (traded money was 92 against a target of 45). |
+| `--island-weight W` | Reward share for the points taken from the Island. |
+| `python -m training.audit_interaction` | The measurement: containers bought, purchases from the stand-in and from other nets, harbor sails, bids, mean bid, Bank bids, where the score comes from (cash, island, leftovers, loans), and the share of containers priced and bought per lot. `--stand-in trader` and `:classic` options. |
+| `anchors add` | `consortium` (2286) and `traders` (1907) are on the ladder. |
+
+Deployed bots: **Broker** (`--min-bid 3 --min-trade 45`, 2150) and **Classic** (`--classic`, 2230) are in the UI list
+and the arena, with their rules built into the bot (`Neural::with_min_bid`, `without_bank`, `without_same_turn_repay`).
+A net trained under a rule must be deployed under it.
+
+#### Results
+
+Audit against a Merchant stand-in, 3 nets at the table (cash / island / leftovers are points of the final score):
+
+| Net | ELO (trainer eval) | Containers bought | Bids on players | Mean bid | Score: cash / island / leftovers |
+|---|---|---|---|---|---|
+| Magnate | 2280 | 15.6 | 66 | $1.83 | 57 / 26 / 21 |
+| `scratch_winonly` (win-only) | 2135 | 24.1 | 90 | $1.44 | 57 / 26 / 17 |
+| `scratch_trade` (trade bonus 0.4) | 2217 | 19.5 | 91 | $2.51 | 73 / 38 / 9 |
+| `scratch_constrained` = Broker | 2147 | 16.6 | 107 | $2.56 | 80 / 51 / 4 |
+| `scratch_traders` (trader opponents) | 1934 | 21.4 | 93 | $3.87 | 91 / 43 / 5 |
+| `classic_net` (no Bank, `--classic`) | 2234, see note | 26.0 | 103 | $2.10 | 72 / 42 / 1 |
+| `scratch_island` (island reward) | 1866 | 23.4, see below | 96 | $10.82 | 196 / 48 / 3 |
+
+Runs that did not help: `scratch_geo` (geometric mean 0.3, 2052), `scratch_geo70` (1926).
+
+- **The classic rule works for interaction.** With no Bank call the net buys 26 to 29 containers per game, makes 36 to 38
+  accepted deliveries, and gets 34 to 42 points from the Island, against 23 to 25 containers and 24 to 33 points for Magnate and
+  Consortium played under the same rule. It prices most of its containers in the top lots (63% in lot 4, the harbor's $6, and
+  29% in lot 3) and buys mostly from the top lots, so it trades with the other nets at the highest prices. Its eval ELO is
+  against opponents that could not call the Bank either, so it is not comparable with the Bank-open ratings. Its final
+  eval stalled 25% of games; the shipped bot keeps the repetition guard.
+- **Harbor and factory purchases barely moved.** The nets buy about 5 containers per seat per game from the opponents
+  whatever the reward (Magnate 15.6 across three seats). Win-only and the trade bonus buy more; none reaches a human's level.
+- **Score sources.** The nets' points are about 55 to 60% cash, 25% island and 10 to 20% leftover containers; none holds
+  a loan at the end. Broker and `scratch_trade` convert best: island 38 to 51 points, leftovers 4 to 9.
+- **The island reward found a loop, not a strategy.** `scratch_island` bids about $11 on average. Three copies of one net bid
+  each other up, every accepted bid mints an equal sum, and each reaches a cash score near 196. It took 48 island points,
+  about the same as Broker's 47, played 8.4 factory purchases per game against 18 to 21 for the others, and has the
+  lowest strength of the set. The audit table is all copies of one net, so it exaggerates this; the loop is real in
+  self-play, and a bid-money cap or penalty is needed before the island reward can be used.
+- **Ratings cluster.** The five from-scratch runs sit within about 300 ELO of each other, and four of them within 165. Part of
+  that is noise (256-game evals), part is that Simple, Merchant and Random are all beaten about 100% of the time so only three
+  anchors discriminate (now six with `consortium` and `traders`). Compare nets in head-to-head games, with several seeds,
+  before ranking them.
+
+#### What is still open
+
+1. **A stand-in that sells cheap.** None of the opponents offers a $1 container on purpose, so no run has learned that buying
+   one is a bargain. Add scripted sellers that price at $1 or $2, and a reward or constraint that a cheap offer is taken when
+   the seat can afford it.
+2. **Cap the bid money.** The mint loop makes high bids profitable among copies of the same net. Cap bids, or pay the
+   reward on the score net of minted money, before using `--island-weight` or `--trade-weight` at high values.
+3. **Strength.** Every from-scratch run is 60 to 350 ELO under Magnate after 30 minutes. Start from Consortium or Magnate under
+   the new constraints and train for 90 minutes or more, with several seeds.
+4. **A better human proxy.** Merchant and the traders are not humans. The only real check is playing the UI against Broker and
+   Classic; record what a person sees there.
+5. **Mixed tables.** The audit puts three copies of one net at the table. Audit one net against Magnate and Consortium.
+6. **Restrictions in the UI.** The engine lets every seat call the Bank; only the Classic bot is bound by `without_bank`.
+   A table-wide classic rule in the web session would need a rule in the engine.
 
 ### Empirical game-theoretic evaluation
 

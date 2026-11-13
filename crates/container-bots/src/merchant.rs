@@ -1,7 +1,7 @@
 //! A tunable cousin of the simple opponent: the same kind of priority list, but every priority and
 //! threshold is a parameter, tuned by self-play in the arena (`tune` in `container-arena`).
 
-use container_engine::action::{Action, Building};
+use container_engine::action::{Action, Building, District};
 use container_engine::observation::{Observation, PhaseView};
 use container_engine::phase::Phase;
 use container_engine::rng::Rng;
@@ -137,10 +137,33 @@ pub fn defaults() -> Vec<f64> {
     PARAMS.iter().map(|p| p.default).collect()
 }
 
+/// How a trader differs from the tuned Merchant: it prices its containers around one lot, and buys
+/// only at prices it finds fair. Merchant takes anything at any price and sells at the cheapest lot,
+/// so a net that trains against it learns that the dearest lot costs nothing. A person does neither.
+#[derive(Clone, Copy, Debug)]
+pub struct Trader {
+    /// The most it pays in a factory district (a harbor lot costs one more for the same lot).
+    pub max_price: u32,
+    /// The lot it prefers to put its containers in.
+    pub target_lot: usize,
+}
+
+impl Trader {
+    /// A trader whose tastes follow from the seed: it pays up to $2, $3 or $4 and prices around $1 to $4.
+    pub fn from_seed(seed: u64) -> Self {
+        let mut rng = Rng::new(seed ^ 0x7ADE);
+        Self {
+            max_price: 2 + rng.below(3),
+            target_lot: rng.below(4) as usize,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Merchant {
     rng: Rng,
     w: Vec<f64>,
+    trader: Option<Trader>,
 }
 
 impl Merchant {
@@ -154,13 +177,22 @@ impl Merchant {
         Self {
             rng: Rng::new(seed),
             w,
+            trader: None,
+        }
+    }
+
+    /// The tuned Merchant with a trader's prices.
+    pub fn trader(seed: u64) -> Self {
+        Self {
+            trader: Some(Trader::from_seed(seed)),
+            ..Self::new(seed)
         }
     }
 }
 
 impl Opponent for Merchant {
     fn choose(&mut self, obs: &Observation, legal: &[Action]) -> Action {
-        let scores: Vec<f64> = legal.iter().map(|&a| score(&self.w, obs, a)).collect();
+        let scores: Vec<f64> = legal.iter().map(|&a| score(&self.w, self.trader, obs, a)).collect();
         let best = scores.iter().cloned().fold(f64::MIN, f64::max);
         let top: Vec<Action> = legal
             .iter()
@@ -172,12 +204,34 @@ impl Opponent for Merchant {
     }
 }
 
-fn score(w: &[f64], obs: &Observation, action: Action) -> f64 {
+fn score(w: &[f64], trader: Option<Trader>, obs: &Observation, action: Action) -> f64 {
     let me = &obs.players[obs.viewer];
     let cash = me.cash.unwrap_or(0);
     let loaded = me.ship.total() > 0;
     let at_main = obs.phase == PhaseView::Open(Phase::Main);
     let c = cash as f64;
+    if let Some(t) = trader {
+        let affordable = |lots: &[container_engine::color::ColorCounts], first_price: u32| {
+            lots.iter().enumerate().any(|(lot, n)| {
+                let price = first_price + lot as u32;
+                !n.is_empty() && price <= t.max_price + first_price - 1 && price <= cash
+            })
+        };
+        match action {
+            Action::FactoryPurchase(p) if !affordable(&obs.players[p].factory_lots, 1) => return -1.0,
+            Action::Sail(ShipLocation::Harbor(p)) if !affordable(&obs.players[p].harbor_lots, 2) => return -1.0,
+            Action::Buy { lot, .. } => {
+                if let PhaseView::Open(Phase::Buy(b)) = obs.phase {
+                    let first = if b.district == District::Factory { 1 } else { 2 };
+                    if first + lot as u32 > t.max_price + first - 1 {
+                        return 1.0;
+                    }
+                }
+            }
+            Action::Place(lot) => return w[PLACE] - 8.0 * (lot as f64 - t.target_lot as f64).abs(),
+            _ => {}
+        }
+    }
     match action {
         Action::RequestLoan if at_main && cash == 0 => w[LOAN_BROKE],
         Action::RequestLoan if at_main && c <= w[LOAN_CASH] => w[LOAN_LOW],

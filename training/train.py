@@ -25,12 +25,12 @@ from torch.nn import functional as F
 
 from training import anchors as anchor_lib
 from training import ladder
-from training.env import DONE, MERCHANT, RANDOM, SIMPLE, STALLED, BatchEnv
+from training.env import DONE, MERCHANT, RANDOM, SIMPLE, STALLED, TRADER, BatchEnv
 from training.model import PolicyNet, export_weights, save_checkpoint
 from training.selfplay import LEARNER, STALL_REWARD, Roller, advantages, reward, table_stats
 
 SCRIPTED = [MERCHANT, SIMPLE, RANDOM]
-KIND_NAME = {MERCHANT: "merchant", SIMPLE: "simple", RANDOM: "random"}
+KIND_NAME = {MERCHANT: "merchant", SIMPLE: "simple", RANDOM: "random", TRADER: "trader"}
 
 
 class Run:
@@ -67,7 +67,7 @@ def imitation_table(rng):
     return players, kinds, seed_of(rng)
 
 
-def league_table(rng, frozen: list[int]):
+def league_table(rng, frozen: list[int], scripted_share: float = 0.55, trader_share: float = 0.0):
     players = int(rng.choice([3, 4, 5]))
     if rng.random() < 0.25:
         return players, [LEARNER] * players, seed_of(rng)
@@ -76,8 +76,10 @@ def league_table(rng, frozen: list[int]):
     for s in range(players):
         if s in learners:
             kinds.append(LEARNER)
-        elif frozen and rng.random() < 0.45:
+        elif frozen and rng.random() >= scripted_share:
             kinds.append(int(rng.choice(frozen)))
+        elif rng.random() < trader_share:
+            kinds.append(TRADER)
         else:
             kinds.append(int(rng.choice(SCRIPTED, p=[0.6, 0.3, 0.1])))
     return players, kinds, seed_of(rng)
@@ -155,7 +157,8 @@ def value_fit(net, data, ret, opt, epochs=1, minibatch=8192):
             opt.step()
 
 
-def outcome_returns(rec, status, players, scores):
+def outcome_returns(rec, status, players, scores, welfare_weight=0.0, win_only=False, geomean_weight=0.0,
+                    trade_weight=0.0, traded=None, min_trade=0.0, penalty=0.0, island_weight=0.0, island=None):
     """Return of every learner decision: the seat's final reward (no bootstrapping)."""
     env_ids = np.concatenate(rec.env)
     seats = np.concatenate(rec.seat)
@@ -168,7 +171,9 @@ def outcome_returns(rec, status, players, scores):
                 ret[k] = STALL_REWARD
                 continue
             if e not in cache:
-                cache[e] = reward(scores[e], int(players[e]))
+                cache[e] = reward(scores[e], int(players[e]), welfare_weight, win_only, geomean_weight, trade_weight,
+                                 None if traded is None else traded[e], min_trade, penalty,
+                                 island_weight, None if island is None else island[e])
             ret[k] = cache[e][s]
     return ret, keep
 
@@ -198,7 +203,59 @@ def main() -> None:
     ap.add_argument("--buy-at-harbor", action="store_true",
                     help="the learner must buy something whenever it sails to a harbor: it may only sail "
                          "to one where something can be bought and may not decline; evaluations too")
+    ap.add_argument("--no-same-turn-repay", action="store_true",
+                    help="the learner may not repay a loan in a turn in which it requested one, so a "
+                         "request is no longer free; evaluations too. The net's Rust bot needs "
+                         "`Neural::without_same_turn_repay` to play under the same rule")
+    ap.add_argument("--welfare-weight", type=float, default=0.0,
+                    help="share of the learner's reward (0..1) that is the table's mean final score instead "
+                         "of its own rank and margin, so that it also gains when the others do well")
+    ap.add_argument("--win-only", action="store_true",
+                    help="the learner's reward is only the share of opponents it beats, with no score-margin "
+                         "term, so a dollar an opponent gains costs it nothing unless it changes the ranking")
+    ap.add_argument("--geomean-weight", type=float, default=0.0,
+                    help="share of the reward (0..1) that is the geometric mean of the table's final scores; "
+                         "the rest is the share of opponents beaten, with no margin term")
+    ap.add_argument("--trade-weight", type=float, default=0.0,
+                    help="share of the reward (0..1) that is the money of the player-to-player deliveries the "
+                         "learner took part in, as deliverer or winning bidder; the rest is the share of "
+                         "opponents beaten")
+    ap.add_argument("--min-bid", type=int, default=0,
+                    help="the learner opens every delivery auction with at least this bid (its whole cash if "
+                         "less); evaluations too. The deployed bot has no matching filter yet")
+    ap.add_argument("--min-trade", type=float, default=0.0,
+                    help="constraint: the money of the player-to-player deliveries each learner seat takes part "
+                         "in should reach this. The reward is the share of opponents beaten minus a penalty, "
+                         "raised while the learners fall short and lowered when they exceed it")
+    ap.add_argument("--penalty-lr", type=float, default=0.05, help="step of the --min-trade penalty per iteration")
+    ap.add_argument("--scripted-share", type=float, default=0.55,
+                    help="chance that an opponent seat of a league table is a scripted bot rather than a frozen "
+                         "copy of the learner (the scripted bots stand in for a human)")
+    ap.add_argument("--trader-share", type=float, default=0.0,
+                    help="chance that a scripted opponent seat is a trader (Merchant that buys only at fair prices "
+                         "and prices its own containers around one lot) instead of Merchant, Simple or Random")
+    ap.add_argument("--classic", action="store_true",
+                    help="the classic rule: nobody at the table, scripted bots and frozen copies included, may call "
+                         "the Bank. The ladder ratings were measured with the Bank, so the eval ELO is not comparable; "
+                         "read the win rates")
+    ap.add_argument("--island-weight", type=float, default=0.0,
+                    help="share of the reward paid for the points the seat's score took from the Island, "
+                         "the rest being the share of opponents beaten (`selfplay.island_term`)")
     args = ap.parse_args()
+    if args.island_weight and any((args.min_trade, args.win_only, args.welfare_weight, args.geomean_weight, args.trade_weight)):
+        raise SystemExit("--island-weight is exclusive with the other reward options")
+    if not 0.0 <= args.island_weight <= 1.0:
+        raise SystemExit("--island-weight is a share of the reward, between 0 and 1")
+    if args.min_trade and any((args.win_only, args.welfare_weight, args.geomean_weight, args.trade_weight)):
+        raise SystemExit("--min-trade is exclusive with the other reward options")
+    if sum(map(bool, (args.win_only, args.welfare_weight, args.geomean_weight, args.trade_weight))) > 1:
+        raise SystemExit("--win-only, --welfare-weight, --geomean-weight and --trade-weight are exclusive")
+    if not 0.0 <= args.trade_weight <= 1.0:
+        raise SystemExit("--trade-weight is a share of the reward, between 0 and 1")
+    if not 0.0 <= args.geomean_weight <= 1.0:
+        raise SystemExit("--geomean-weight is a share of the reward, between 0 and 1")
+    if not 0.0 <= args.welfare_weight <= 1.0:
+        raise SystemExit("--welfare-weight is a share of the reward, between 0 and 1")
     if args.exploit:
         if args.exploit not in anchor_lib.net_names():
             raise SystemExit(f"--exploit needs a rated anchor net, one of {anchor_lib.net_names()}")
@@ -223,12 +280,22 @@ def main() -> None:
     env = BatchEnv(args.envs, args.threads, pinned=device == "cuda")
     eval_env = BatchEnv(256, args.threads, pinned=device == "cuda")  # evaluation must not disturb the games carried over in `env`
 
+    if args.classic:
+        env.ban_bank_all()
+        eval_env.ban_bank_all()
     if args.no_call_bank:
         env.ban_bank(LEARNER)
         eval_env.ban_bank(LEARNER)
     if args.buy_at_harbor:
         env.require_harbor_purchase(LEARNER)
         eval_env.require_harbor_purchase(LEARNER)
+    penalty = 0.0
+    if args.min_bid:
+        env.require_min_bid(LEARNER, args.min_bid)
+        eval_env.require_min_bid(LEARNER, args.min_bid)
+    if args.no_same_turn_repay:
+        env.forbid_same_turn_repay(LEARNER)
+        eval_env.forbid_same_turn_repay(LEARNER)
 
     net = PolicyNet(env.state_dim, env.action_dim, args.hidden).to(device)
     if args.init:
@@ -269,7 +336,9 @@ def main() -> None:
             t = time.monotonic()
             rec = data = None
             rec, status, players, scores, _ = roller.collect({0: net}, target=env.n, mode="teacher", beta=0.3)
-            ret, keep = outcome_returns(rec, status, players, scores)
+            ret, keep = outcome_returns(rec, status, players, scores, args.welfare_weight, args.win_only, args.geomean_weight,
+                                      args.trade_weight, roller.finished.traded,
+                                      args.min_trade, penalty, args.island_weight, roller.finished.breakdown[:, :, 1])
             data, _, _ = rec.tensors(keep)
             stats = imitate(net, opt, data)
             value_fit(net, data, ret[keep], opt)
@@ -294,7 +363,7 @@ def main() -> None:
             return anchor_lib.exploit_table(rng, target_slot)
     else:
         def next_table():
-            return league_table(rng, list(frozen) + list(anchor_slots))
+            return league_table(rng, list(frozen) + list(anchor_slots), args.scripted_share, args.trader_share)
     roller = Roller(env, next_table, device, rng)
     greedy = set(anchor_slots) if args.exploit and args.target_mode == "greedy" else set()
     while run.elapsed() < ppo_end:
@@ -308,14 +377,30 @@ def main() -> None:
                                                               greedy_slots=greedy)
         net.train()
         env_ids, seats = np.concatenate(rec.env), np.concatenate(rec.seat)
-        adv, ret, keep = advantages(rec, env_ids, seats, status, players, scores)
+        adv, ret, keep = advantages(rec, env_ids, seats, status, players, scores,
+                                    welfare_weight=args.welfare_weight, win_only=args.win_only, geomean_weight=args.geomean_weight,
+                                    trade_weight=args.trade_weight, traded=roller.finished.traded,
+                                    min_trade=args.min_trade, penalty=penalty, island_weight=args.island_weight,
+                                    island=roller.finished.breakdown[:, :, 1])
         data, _, _ = rec.tensors(keep)
-        mean_reward, finished = table_stats(status, players, scores, tables)
+        mean_reward, finished = table_stats(status, players, scores, tables,
+                                            welfare_weight=args.welfare_weight, win_only=args.win_only, geomean_weight=args.geomean_weight,
+                                    trade_weight=args.trade_weight, traded=roller.finished.traded,
+                                    min_trade=args.min_trade, penalty=penalty, island_weight=args.island_weight,
+                                    island=roller.finished.breakdown[:, :, 1])
         stats = ppo_update(net, opt, data, adv[keep], ret[keep])
+        trade_now = None
+        if args.min_trade:
+            fin = roller.finished
+            seen = [fin.traded[i][s] for i, (_, kinds, *_rest) in enumerate(tables) if status[i] == DONE
+                    for s in range(len(kinds)) if kinds[s] == LEARNER]
+            if seen:
+                trade_now = float(np.mean(seen))
+                penalty = float(np.clip(penalty + args.penalty_lr * (args.min_trade - trade_now) / args.min_trade, 0.0, 2.0))
         games += finished
         decisions += len(data["state"])
         run.log(type="train", stage=stage_name, iter=it, games=games, decisions=decisions,
-                mean_reward=round(mean_reward, 4), frozen=len(frozen), stalled=int((status == STALLED).sum()),
+                mean_reward=round(mean_reward, 4), penalty=round(penalty, 3), traded=trade_now, frozen=len(frozen), stalled=int((status == STALLED).sum()),
                 games_per_sec=round(len(status) / (time.monotonic() - t), 1), **stats)
         it += 1
         if run.elapsed() - last_eval > args.eval_seconds:

@@ -9,7 +9,7 @@ from training import br, br_report
 from training import evalcore as E
 from training.env import DONE, MERCHANT, RANDOM, STALLED, STANDARD
 from training.population import Member, Population
-from training.selfplay import LEARNER, reward
+from training.selfplay import LEARNER, reward, table_welfare
 
 
 def scripted_population(tmp_path) -> Population:
@@ -34,6 +34,17 @@ def test_terminal_payoff_is_canonical_or_shaped_and_stalls_pay_nothing():
     shaped = br.terminal_payoff("shaped", status, players, scores, winners)
     assert np.allclose(shaped[0, :3], reward(scores[0], 3)) and not shaped[0, 3:].any()
     assert not shaped[2].any()
+
+
+def test_welfare_weight_moves_the_reward_to_the_tables_mean_score_and_zero_changes_nothing():
+    poor, rich = np.array([30, 20, 10]), np.array([130, 120, 110])
+    assert np.allclose(reward(poor, 3, 0.0), reward(poor, 3))
+    # Every seat ranks the same in both tables, so only the welfare term tells them apart.
+    assert np.allclose(reward(poor, 3), reward(rich, 3))
+    assert (reward(rich, 3, 0.4) > reward(poor, 3, 0.4)).all()
+    # The same table total, split differently: the welfare term is shared by every seat alike.
+    evener = np.array([20, 20, 20])
+    assert np.isclose(table_welfare(poor, 3), table_welfare(evener, 3))
 
 
 def test_parse_profile_normalises_and_rejects_unknown_strategies(tmp_path):
@@ -180,3 +191,34 @@ def test_validation_table_lists_part_way_checkpoints_by_minutes_of_training():
     first = next(x for x in section if x.startswith("| r | 4 |"))
     assert "+0.300 [+0.300, +0.300]" in first  # final minus this: 0.3 - 0.0 in sample mode, the same on every seed
     assert "+0.300" in br_report.render_pairs(study, [("r/sample", "r@4m/sample")])
+
+
+def test_trade_and_geomean_rewards_pay_what_they_name():
+    from training.selfplay import reward
+
+    scores = np.array([60, 40, 20, 0, 0])
+    plain = reward(scores, 3, trade_weight=0.3, traded=np.array([0, 0, 0, 0, 0]))
+    busy = reward(scores, 3, trade_weight=0.3, traded=np.array([80, 0, 0, 0, 0]))
+    assert busy[0] > plain[0] and busy[1] == plain[1]
+    assert reward(scores, 3, geomean_weight=0.7)[0] > reward(scores, 3, geomean_weight=0.7)[2]
+    rich = reward(np.array([60, 60, 60]), 3, geomean_weight=0.7)
+    poor = reward(np.array([10, 10, 10]), 3, geomean_weight=0.7)
+    assert rich[0] > poor[0]
+
+
+def test_min_trade_penalty_charges_the_shortfall_and_nothing_once_met():
+    from training.selfplay import reward
+
+    scores = np.array([60, 40, 20])
+    short = reward(scores, 3, min_trade=40.0, traded=np.array([0, 20, 40]), penalty=0.5)
+    assert np.allclose(short, [1.0 - 0.5, 0.5 - 0.25, 0.0])
+    met = reward(scores, 3, min_trade=40.0, traded=np.array([40, 50, 60]), penalty=0.5)
+    assert np.allclose(met, reward(scores, 3, win_only=True))
+
+
+def test_the_island_reward_pays_island_points_next_to_the_win():
+    scores = np.array([30, 20, 10, 0, 0])
+    island = np.array([0, 80, 40, 0, 0])
+    r = reward(scores, 3, island_weight=0.5, island=island)
+    # seat 0 wins both opponents (1.0) but took nothing from the island; seat 1 took all of it
+    assert np.allclose(r[:3], [0.5 * 1.0, 0.5 * 0.5 + 0.5 * 1.0, 0.0 + 0.5 * 0.5])

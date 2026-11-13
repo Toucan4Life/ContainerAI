@@ -179,7 +179,8 @@ def seat_slots(policies: Sequence[Policy], nets: dict[str, PolicyNet]):
 
 def play(specs: Sequence[GameSpec], policies: Sequence[Policy], *, device: str | None = None, envs: int = 256,
          threads: int = 12, horizon: int = HORIZON, seed: int = 0, nets: dict | None = None,
-         log: Callable[[str], None] | None = print, chunk: int = 2048) -> Records:
+         log: Callable[[str], None] | None = print, chunk: int = 2048,
+         configure: Callable[[BatchEnv], None] | None = None) -> Records:
     """Plays every spec to its end (or the horizon) and returns one record per spec, in spec order."""
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(seed)
@@ -189,6 +190,8 @@ def play(specs: Sequence[GameSpec], policies: Sequence[Policy], *, device: str |
     g_total = len(specs)
     env = BatchEnv(max(1, min(envs, g_total)), threads, pinned=device == "cuda")
     env.set_horizon(horizon)
+    if configure:
+        configure(env)  # e.g. the rules a net was trained under, for the slots `SLOT_BASE + k`
     queue = iter(specs)
 
     def next_table():
@@ -198,6 +201,7 @@ def play(specs: Sequence[GameSpec], policies: Sequence[Policy], *, device: str |
     roller = Roller(env, next_table, device, np.random.default_rng(seed), limit=g_total, record=False)
     cols = {k: np.zeros(g_total, dtype=d) for k, d in (("status", np.int8), ("winners", np.int32), ("actions", np.int32))}
     scores = np.zeros((g_total, MAX_PLAYERS), dtype=np.int32)
+    breakdown = np.zeros((g_total, MAX_PLAYERS, 4), dtype=np.int32)
     seen = np.zeros(g_total, dtype=bool)
     t0 = time.monotonic()
     try:
@@ -212,6 +216,7 @@ def play(specs: Sequence[GameSpec], policies: Sequence[Policy], *, device: str |
             cols["winners"][fin.gid] = fin.winners
             cols["actions"][fin.gid] = fin.actions
             scores[fin.gid] = got
+            breakdown[fin.gid] = fin.breakdown
             if log:
                 done = int(seen.sum())
                 rate = done / (time.monotonic() - t0)
@@ -229,7 +234,7 @@ def play(specs: Sequence[GameSpec], policies: Sequence[Policy], *, device: str |
                        sha256=sha256_file(p.path) if p.path else None) for p in policies],
         horizon=horizon, torch_seed=seed, git=git_commit(), seconds=round(time.monotonic() - t0, 1),
     )
-    return Records(
+    rec = Records(
         players=np.array([s.players for s in specs], dtype=np.int8),
         length=np.array([s.length for s in specs], dtype=np.int8),
         seed=np.array([s.seed for s in specs], dtype=np.uint64), seats=seats,
@@ -237,6 +242,8 @@ def play(specs: Sequence[GameSpec], policies: Sequence[Policy], *, device: str |
         cluster=np.array([s.cluster for s in specs], dtype=np.uint64),
         status=cols["status"], scores=scores, winners=cols["winners"], actions=cols["actions"], meta=meta,
     )
+    rec.breakdown = breakdown  # cash, island, leftovers, loans per seat; a diagnostic, not saved
+    return rec
 
 
 # --------------------------------------------------------------------------------------- utilities

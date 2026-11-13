@@ -151,7 +151,7 @@ def evaluate_exploit(env: BatchEnv, net, target_net, device: str, rng, games: in
 
 
 def rate(checkpoint: str, games: int, exclude: str | None = None, seed: int = 7, threads: int = 12,
-         no_call_bank: bool = False, buy_at_harbor: bool = False) -> dict:
+         no_call_bank: bool = False, buy_at_harbor: bool = False, no_same_turn_repay: bool = False) -> dict:
     """Rates a checkpoint against the current ladder, leaving out the anchor `exclude`. Stores nothing."""
     device = "cuda" if torch.cuda.is_available() else "cpu"
     ladder = load_ladder()
@@ -163,6 +163,8 @@ def rate(checkpoint: str, games: int, exclude: str | None = None, seed: int = 7,
         env.ban_bank(LEARNER)
     if buy_at_harbor:
         env.require_harbor_purchase(LEARNER)
+    if no_same_turn_repay:
+        env.forbid_same_turn_repay(LEARNER)
     return evaluate(env, net, device, np.random.default_rng(seed), games, ladder, nets)
 
 
@@ -206,6 +208,8 @@ def main() -> None:
     r.add_argument("--seed", type=int, default=7)
     r.add_argument("--no-call-bank", action="store_true", help="the rated net may never call the Bank")
     r.add_argument("--buy-at-harbor", action="store_true", help="the rated net must buy when it sails to a harbor")
+    r.add_argument("--no-same-turn-repay", action="store_true",
+                   help="the rated net may not repay a loan in a turn in which it requested one")
     d = sub.add_parser("duel")
     d.add_argument("checkpoint")
     d.add_argument("target")
@@ -218,7 +222,7 @@ def main() -> None:
         print(add(args.name, args.checkpoint, args.games))
     elif args.cmd == "rate":
         print(rate(args.checkpoint, args.games, seed=args.seed, no_call_bank=args.no_call_bank,
-                   buy_at_harbor=args.buy_at_harbor))
+                   buy_at_harbor=args.buy_at_harbor, no_same_turn_repay=args.no_same_turn_repay))
     elif args.cmd == "duel":
         print(duel(args.checkpoint, args.target, args.games, args.sample_target, seed=args.seed))
     for n, v in sorted(load_ladder().items(), key=lambda kv: kv[1]):

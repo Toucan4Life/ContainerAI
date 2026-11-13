@@ -91,6 +91,49 @@ fn every_opponent_plays_every_kind_of_game_to_its_end() {
 }
 
 #[test]
+fn broker_never_opens_a_delivery_auction_under_its_minimum_bid() {
+    use container_engine::observation::PhaseView;
+    let mut opening_bids = 0;
+    for seed in 0..6 {
+        let mut game = Game::new(config(4, GameLength::Standard, seed)).unwrap();
+        let mut seats: Vec<_> = (0..4).map(|s| create("broker", s).unwrap()).collect();
+        while !game.is_terminal() {
+            let viewer = game.current_player();
+            let obs = game.observation(viewer).unwrap();
+            let action = seats[viewer].choose(&obs, &game.legal_actions());
+            if let (PhaseView::Bid(b), Action::Bid(amount)) = (obs.phase, action) {
+                if !b.runoff {
+                    opening_bids += 1;
+                    assert!(amount >= 3.min(obs.players[viewer].cash.unwrap()), "bid {amount}");
+                }
+            }
+            game.apply(action).unwrap();
+        }
+    }
+    assert!(opening_bids > 0);
+}
+
+#[test]
+fn classic_never_calls_the_bank() {
+    let mut turns = 0;
+    for seed in 0..4 {
+        let mut game = Game::new(config(4, GameLength::Standard, seed)).unwrap();
+        let mut seats: Vec<_> = (0..4).map(|s| create("classic", s).unwrap()).collect();
+        while !game.is_terminal() && turns < LIMIT * 4 {
+            turns += 1;
+            let viewer = game.current_player();
+            let obs = game.observation(viewer).unwrap();
+            let legal = game.legal_actions();
+            let action = seats[viewer].choose(&obs, &legal);
+            let calls = matches!(action, Action::StartAuction { .. } | Action::Outbid(_));
+            let only_call = legal.iter().all(|a| matches!(a, Action::StartAuction { .. } | Action::Outbid(_)));
+            assert!(!calls || only_call, "{action:?}");
+            game.apply(action).unwrap();
+        }
+    }
+}
+
+#[test]
 fn opponents_of_different_kinds_can_share_a_table() {
     let ids: Vec<_> = OPPONENTS.iter().map(|o| o.id).collect();
     for config in every_table() {

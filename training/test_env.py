@@ -38,6 +38,40 @@ def test_slots_get_decisions_and_can_finish_a_game():
     assert (status == DONE).all()
 
 
+REQUEST_LOAN, REPAY_LOAN = 16, 17  # the action kinds, one-hot at the start of an action's features
+
+
+def repays_offered_after_a_request(rule: bool, n=16) -> int:
+    """Plays random games with every seat a slot; counts the decisions that offer a repayment right
+    after the same seat chose to request a loan (a free action, so the seat is still in its turn)."""
+    env = BatchEnv(n, threads=2)
+    if rule:
+        env.forbid_same_turn_repay(0)
+    for i in range(n):
+        env.reset(i, 3, 200 + i, [0, 0, 0])
+    rng = np.random.default_rng(0)
+    asked = np.zeros(n, dtype=bool)
+    offered = 0
+    for _ in range(3000):
+        env.advance()
+        _, acts, mask, slot, _ = env.observe()
+        pending = slot >= 0
+        if not pending.any():
+            break
+        offers = ((acts[:, :, REPAY_LOAN] > 0.5) & (mask > 0)).any(axis=1)
+        offered += int((pending & asked & offers).sum())
+        counts = mask.sum(axis=1)
+        pick = (rng.random(n) * np.maximum(counts, 1)).astype(np.int32)
+        asked = pending & (acts[np.arange(n), pick, REQUEST_LOAN] > 0.5)
+        env.step(pick)
+    return offered
+
+
+def test_a_seat_that_may_not_repay_in_the_turn_it_borrowed_is_not_offered_to():
+    assert repays_offered_after_a_request(rule=False) > 0
+    assert repays_offered_after_a_request(rule=True) == 0
+
+
 def test_teacher_returns_a_legal_index():
     env = BatchEnv(4, threads=1)
     for i in range(4):
