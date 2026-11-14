@@ -758,8 +758,41 @@ Measurements and decisions from the critique of this section, the mixed-table ch
 - Build the env library into a separate `CARGO_TARGET_DIR` when a training run is using `target/`, or the run loses its library. Keep venvs and scripts out of `/tmp`, which a reboot wipes.
 - Not verified: Rust-versus-Python parity for Dealer (as `test_evalcore.py` does for older bots), other price caps (such as $4), and longer or multi-seed runs.
 
+#### Evaluating a net by its copies at a five-seat table
+
+**Conclusion.** A ladder ELO and a table of one net at every seat cannot tell a strong net from one that has found the
+mint loop. Evaluate a net at a five-seat table with 1, 2 and 3 copies of it, the other seats held by the same fixed bot.
+Read the copies' mean score and mean bid at three copies over one copy, not the winner share. Standard length is the
+headline; Extended is the stress test; Short is a cheap pre-screen that can convict a net but never clear it.
+
+**Measured** (800 games per cell, every seating of the copies, Consortium fillers; a Magnate rerun of the island net
+agrees; the Consortium control is fair at every length; one seed block, about ±0.03 on a share):
+
+| net | length | score, 3 copies / 1 | bid, 3 copies / 1 | share per seat over fair, 3 copies |
+|---|---|---|---|---|
+| island (`scratch_island`) | Short / Standard / Extended | 1.98 / 2.75 / 3.28 | 1.87 / 2.45 / 2.82 | 0.90 / 1.22 / 1.37 |
+| Broker, Dealer, Trade | all three | 1.17 to 1.28 | 0.96 to 1.22 | 1.26 to 1.51 |
+| Consortium (control) | all three | 1.00 | 1.00 | 0.98 to 1.01 |
+
+- One copy shows plain strength (the island net wins about 1%). Two copies, that is one other copy, hide the loop:
+  mean bid about $4, no cash gain. Three copies show it: mean bid $8 to $9, copy cash up about eightfold.
+- Winner share rises for strong nets that do not collude, so it cannot be the screen. The score and bid ratios separate
+  them at every length.
+- Short is the least sensitive length (island share 0.90 of fair at three copies, a pass by share); the loop's cash gain
+  is +50 at Short, +103 at Standard, +146 at Extended. Short saves only about a quarter of the run time.
+- Nets were trained at Standard only; 7 stalled games, all at Extended, are left out.
+
+**Planned: the same probe during a run.** Every third to fifth evaluation of `training.train`, play about 300 games per
+copy count (k = 1 and 3, five seats, Standard, Consortium fillers; about 10 s) and log the score ratio, the bid ratio and
+the share per seat over fair, with the stall rate and a confidence interval, next to the interaction counters (share of
+containers priced at $3 or less, buys and bids per game). They are diagnostics: the run warns when the score ratio goes
+above about 1.6 and never stops or changes the reward. Mid-run numbers are noisy; the holdout stays the verdict.
+Not implemented yet. The sweep script used for the table is not in the repository.
+
 #### What is still open
 
+0. **Implement the mid-run copy probe** described above, and add `--players`, `--copies` and `--length` to
+   `training.interplay`.
 1. **A stand-in that sells cheap.** None of the opponents offers a $1 container on purpose, so no run has learned that buying
    one is a bargain. Add scripted sellers that price at $1 or $2, and a reward or constraint that a cheap offer is taken when
    the seat can afford it.
@@ -769,7 +802,8 @@ Measurements and decisions from the critique of this section, the mixed-table ch
    the new constraints and train for 90 minutes or more, with several seeds.
 4. **A better human proxy.** Merchant and the traders are not humans. The only real check is playing the UI against Broker and
    Classic; record what a person sees there.
-5. **Mixed tables.** The audit puts three copies of one net at the table. Audit one net against Magnate and Consortium.
+5. **Mixed tables.** Done for the island net, Broker, Dealer and Trade (see the section above). Not done for a net trained
+   with a bid cap.
 6. **Restrictions in the UI.** The engine lets every seat call the Bank; only the Classic bot is bound by `without_bank`.
    A table-wide classic rule in the web session would need a rule in the engine.
 
