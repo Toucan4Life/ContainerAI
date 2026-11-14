@@ -16,6 +16,7 @@ pub mod magnate;
 pub mod merchant;
 pub mod neural;
 pub mod random;
+pub mod solitaire;
 
 pub use heuristic::Heuristic;
 pub use merchant::Merchant;
@@ -49,7 +50,7 @@ pub struct OpponentInfo {
 }
 
 /// Every opponent that can be selected.
-pub const OPPONENTS: [OpponentInfo; 8] = [
+pub const OPPONENTS: [OpponentInfo; 9] = [
     OpponentInfo {
         id: random::ID,
         name: "Random",
@@ -67,6 +68,12 @@ pub const OPPONENTS: [OpponentInfo; 8] = [
         name: "Merchant",
         description: "Simple's priorities, tuned in self-play: it also builds, borrows and bids by cargo.",
         elo: 932,
+    },
+    OpponentInfo {
+        id: solitaire::ID,
+        name: "Solitaire",
+        description: "The bot of the solitaire variant: a fixed order of sail, produce, buy from a factory, buy from a harbor, reprice and build, with a d20 for every price and every purchase. It never calls the Bank. Rated 1150 on the Random, Simple and Merchant ladder; against the nets it is far weaker (about 300 ELO above Random, where Magnate is about 890).",
+        elo: 1150,
     },
     OpponentInfo {
         id: broker::ID,
@@ -106,6 +113,7 @@ pub fn create(id: &str, seed: u64) -> Option<Box<dyn Opponent + Send>> {
         random::ID => Some(Box::new(Random::new(seed))),
         heuristic::ID => Some(Box::new(Heuristic::new(seed))),
         merchant::ID => Some(Box::new(Merchant::new(seed))),
+        solitaire::ID => Some(Box::new(solitaire::Solitaire::new(seed))),
         magnate::ID => Some(Box::new(magnate::new(seed))),
         consortium::ID => Some(Box::new(consortium::new(seed))),
         broker::ID => Some(Box::new(broker::new(seed))),

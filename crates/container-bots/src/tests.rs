@@ -137,6 +137,26 @@ fn dealer_never_opens_a_delivery_auction_under_its_minimum_bid() {
 }
 
 #[test]
+fn solitaire_never_calls_the_bank() {
+    for seed in 0..4 {
+        let mut game = Game::new(config(4, GameLength::Standard, seed)).unwrap();
+        let mut seats: Vec<_> = (0..4).map(|s| create("solitaire", s).unwrap()).collect();
+        let mut turns = 0;
+        while !game.is_terminal() && turns < LIMIT * 4 {
+            turns += 1;
+            let viewer = game.current_player();
+            let obs = game.observation(viewer).unwrap();
+            let legal = game.legal_actions();
+            let action = seats[viewer].choose(&obs, &legal);
+            let calls = matches!(action, Action::StartAuction { .. } | Action::Outbid(_));
+            let only_call = legal.iter().all(|a| matches!(a, Action::StartAuction { .. } | Action::Outbid(_)));
+            assert!(!calls || only_call, "{action:?}");
+            game.apply(action).unwrap();
+        }
+    }
+}
+
+#[test]
 fn classic_never_calls_the_bank() {
     let mut turns = 0;
     for seed in 0..4 {
