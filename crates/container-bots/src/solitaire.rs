@@ -3,14 +3,20 @@
 //! The variant scripts a bot with a fixed action order (sail, produce, buy from a factory, buy from a
 //! harbor, reprice, build) and a d20 for every price and every purchase. This port keeps the order and
 //! the tables. Where the variant gives the bots no money, here the bot has real cash, so it bids the
-//! rolled value of the shipment, borrows when it has none and pays loans back when rich. It never calls
-//! the Bank. The die is a seeded [`Rng`], so a seed repeats the game.
+//! rolled value of the shipment, borrows when it has none and pays loans back when rich.
+//!
+//! The variant does not say what the bots do with the Off-Shore Bank. This port adds one step to the list,
+//! after the harbor purchase and before the reprice: a bot that could not sail, produce or buy rolls a d20
+//! and calls the Bank on 11+ for the container lot with the most containers (the cheapest lot among
+//! equals), bidding by the shipment table ($3 on 1-4, up to $7 on 17-20; the least allowed, if the roll
+//! is lower). When an opponent holds the container lot, it outbids them on 16+. It never bids containers
+//! for a cash lot. The die is a seeded [`Rng`], so a seed repeats the game.
 
 use container_engine::action::{Action, Building, District};
 use container_engine::observation::{Observation, PhaseView};
 use container_engine::phase::Phase;
 use container_engine::rng::Rng;
-use container_engine::state::ShipLocation;
+use container_engine::state::{AuctionKind, ShipLocation};
 
 use crate::Opponent;
 
@@ -48,6 +54,22 @@ impl Solitaire {
     /// Value of the shipment: one roll per type of container.
     fn shipment_value(&mut self, types: usize) -> u32 {
         (0..types).map(|_| (self.d20() - 1) / 4 + 3).sum()
+    }
+
+    /// 11+ calls the Bank on the fullest container lot; an opponent's cash bid is outbid on 16+.
+    fn bank_call(&mut self, obs: &Observation, legal: &[Action]) -> Option<Action> {
+        let kind = AuctionKind::ContainerLot;
+        if legal.contains(&Action::Outbid(kind)) && self.d20() >= 16 {
+            return Some(Action::Outbid(kind));
+        }
+        let lot = legal
+            .iter()
+            .filter_map(|a| match a {
+                Action::StartAuction { kind: AuctionKind::ContainerLot, lot } => Some(*lot),
+                _ => None,
+            })
+            .max_by_key(|&lot| (obs.bank.container_lots[lot].total(), std::cmp::Reverse(lot)))?;
+        (self.d20() >= 11).then_some(Action::StartAuction { kind, lot })
     }
 
     fn factory_cap(&mut self) -> u32 {
@@ -143,6 +165,14 @@ impl Opponent for Solitaire {
             PhaseView::Open(Phase::Load(_)) => {
                 return legal.iter().copied().find(|a| matches!(a, Action::Load(_))).unwrap_or(Action::DoneLoading);
             }
+            PhaseView::Open(Phase::BankBid(_)) => {
+                let want = self.shipment_value(1);
+                let bids = || legal.iter().filter_map(|a| if let Action::BidCash(x) = a { Some(*x) } else { None });
+                return match bids().filter(|&x| x <= want).max().or_else(|| bids().min()) {
+                    Some(x) => Action::BidCash(x),
+                    None => first,
+                };
+            }
             PhaseView::Open(Phase::Main) => {}
             PhaseView::Open(_) => return first,
         }
@@ -197,6 +227,10 @@ impl Opponent for Solitaire {
         if let Some((_, p)) = harbor {
             self.cap = cap;
             return Action::Sail(ShipLocation::Harbor(p));
+        }
+        // The Bank call.
+        if let Some(a) = self.bank_call(obs, legal) {
+            return a;
         }
         // Produce, even with some stock, rather than idle.
         if has(Action::Produce) && stocked < 2 {

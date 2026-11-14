@@ -72,8 +72,8 @@ pub const OPPONENTS: [OpponentInfo; 9] = [
     OpponentInfo {
         id: solitaire::ID,
         name: "Solitaire",
-        description: "The bot of the solitaire variant: a fixed order of sail, produce, buy from a factory, buy from a harbor, reprice and build, with a d20 for every price and every purchase. It never calls the Bank. Rated 1150 on the Random, Simple and Merchant ladder; against the nets it is far weaker (about 300 ELO above Random, where Magnate is about 890).",
-        elo: 1150,
+        description: "The bot of the solitaire variant: a fixed order of sail, produce, buy from a factory, buy from a harbor, reprice and build, with a d20 for every price and every purchase. When it has nothing else to do it rolls a d20 and calls the Bank on 11+ for the fullest container lot, and it outbids an opponent's cash bid on 16+. Rated 1200 on the Random, Simple and Merchant ladder; against the nets it is far weaker (about 270 ELO above Random, where Magnate is about 870).",
+        elo: 1200,
     },
     OpponentInfo {
         id: broker::ID,

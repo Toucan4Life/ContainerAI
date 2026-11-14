@@ -137,8 +137,9 @@ fn dealer_never_opens_a_delivery_auction_under_its_minimum_bid() {
 }
 
 #[test]
-fn solitaire_never_calls_the_bank() {
-    for seed in 0..4 {
+fn solitaire_calls_the_bank_for_a_container_lot_and_bids_cash() {
+    let (mut starts, mut bids) = (0, 0);
+    for seed in 0..6 {
         let mut game = Game::new(config(4, GameLength::Standard, seed)).unwrap();
         let mut seats: Vec<_> = (0..4).map(|s| create("solitaire", s).unwrap()).collect();
         let mut turns = 0;
@@ -148,12 +149,19 @@ fn solitaire_never_calls_the_bank() {
             let obs = game.observation(viewer).unwrap();
             let legal = game.legal_actions();
             let action = seats[viewer].choose(&obs, &legal);
-            let calls = matches!(action, Action::StartAuction { .. } | Action::Outbid(_));
-            let only_call = legal.iter().all(|a| matches!(a, Action::StartAuction { .. } | Action::Outbid(_)));
-            assert!(!calls || only_call, "{action:?}");
+            match action {
+                Action::StartAuction { kind, .. } => {
+                    starts += 1;
+                    assert_eq!(kind, container_engine::state::AuctionKind::ContainerLot);
+                }
+                Action::BidCash(_) => bids += 1,
+                Action::BidContainer { .. } => panic!("it never bids containers"),
+                _ => {}
+            }
             game.apply(action).unwrap();
         }
     }
+    assert!(starts > 0 && bids >= starts, "{starts} calls, {bids} cash bids");
 }
 
 #[test]
