@@ -31,11 +31,11 @@ export default function GameOver({ snap, onAgain }: Props) {
                     <small> · discarded {COLOR_LABELS[score.discarded].toLowerCase()}</small>
                   )}
                 </td>
-                <td>{money(score.cash)}</td>
-                <td>{money(score.island)}</td>
-                <td>{money(score.leftovers)}</td>
-                <td>{money(score.loans)}</td>
-                <td><strong>{money(score.total)}</strong></td>
+                <td data-label="Cash">{money(score.cash)}</td>
+                <td data-label="Island">{money(score.island)}</td>
+                <td data-label="Leftovers">{money(score.leftovers)}</td>
+                <td data-label="Loans">{money(score.loans)}</td>
+                <td data-label="Total"><strong>{money(score.total)}</strong></td>
               </tr>
             ))}
           </tbody>

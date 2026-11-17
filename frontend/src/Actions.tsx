@@ -9,7 +9,9 @@ import {
   Hammer,
   Landmark,
   LoaderCircle,
+  Minus,
   Package,
+  Plus,
   Shuffle,
   Ship,
   Undo2,
@@ -117,6 +119,16 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
+/** On a phone the hint is clamped to a few lines; tapping it shows the rest. */
+function Hint({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <p className={open ? "panel-hint hint-open" : "panel-hint"} onClick={() => setOpen(!open)}>
+      {children}
+    </p>
+  );
+}
+
 function Shell({
   snap,
   title,
@@ -132,12 +144,12 @@ function Shell({
 }) {
   const cash = snap.players[snap.viewer].cash;
   return (
-    <section className="action-panel">
+    <section className="action-panel" data-phase={snap.phase.type}>
       <div className="panel-heading" data-rule={rule}>
         <span>{title}</span>
         <small>{cash !== null && `YOUR CASH ${money(cash)}`}</small>
       </div>
-      {hint && <p className="panel-hint">{hint}</p>}
+      {hint && <Hint>{hint}</Hint>}
       {children}
     </section>
   );
@@ -173,8 +185,14 @@ function LoanButtons({ snap, act }: Props) {
   );
 }
 
-export default function ActionPanel({ snap, act, undo, stepBack }: Props & { undo: () => void; stepBack: () => void }) {
-  if (snap.legal.length === 0) return <Waiting snap={snap} />;
+export default function ActionPanel({
+  snap,
+  act,
+  undo,
+  stepBack,
+  waitingExtra,
+}: Props & { undo: () => void; stepBack: () => void; waitingExtra?: ReactNode }) {
+  if (snap.legal.length === 0) return <Waiting snap={snap}>{waitingExtra}</Waiting>;
   const midAction = snap.phase.type !== "Main";
   return (
     <>
@@ -185,7 +203,9 @@ export default function ActionPanel({ snap, act, undo, stepBack }: Props & { und
           onClick={undo}
           title={midAction ? "Go back to the start of this action" : "Take back your last action this turn"}
         >
-          <Undo2 size={14} /> {midAction ? "Cancel this action" : "Undo last action"}
+          <Undo2 size={14} />
+          <span className="undo-long">{midAction ? "Cancel this action" : "Undo last action"}</span>
+          <span className="undo-short">{midAction ? "Cancel" : "Undo"}</span>
         </button>
       )}
     </>
@@ -249,7 +269,7 @@ function waitingText(snap: Snapshot): string {
   }
 }
 
-function Waiting({ snap }: { snap: Snapshot }) {
+function Waiting({ snap, children }: { snap: Snapshot; children?: ReactNode }) {
   return (
     <section className="action-panel action-waiting">
       <LoaderCircle size={18} className="spin" />
@@ -259,6 +279,7 @@ function Waiting({ snap }: { snap: Snapshot }) {
         aria-hidden
       />
       <strong>{waitingText(snap)}</strong>
+      {children}
     </section>
   );
 }
@@ -490,7 +511,8 @@ function MainPanel({ snap, act }: Props) {
               <i key={i} className={i < snap.turn.actionsLeft ? "pip-on" : ""} />
             ))}
           </span>
-          {snap.turn.actionsLeft} action{snap.turn.actionsLeft === 1 ? "" : "s"} left. Loans are free.
+          {snap.turn.actionsLeft} action{snap.turn.actionsLeft === 1 ? "" : "s"} left.
+          <span className="hint-extra"> Loans are free.</span>
         </>
       }
     >
@@ -683,6 +705,9 @@ function AmountInput({
   const clamp = (n: number) => Math.min(max, Math.max(min, Number.isFinite(n) ? n : min));
   return (
     <div className="amount">
+      <button type="button" className="amount-step" onClick={() => onChange(clamp(value - 1))} disabled={value <= min} aria-label="Decrease">
+        <Minus size={18} />
+      </button>
       <input
         type="range"
         min={min}
@@ -691,9 +716,13 @@ function AmountInput({
         onChange={(e) => onChange(clamp(Number(e.target.value)))}
         aria-label="Amount"
       />
+      <button type="button" className="amount-step" onClick={() => onChange(clamp(value + 1))} disabled={value >= max} aria-label="Increase">
+        <Plus size={18} />
+      </button>
       <input
         className="amount-number"
         type="number"
+        inputMode="numeric"
         min={min}
         max={max}
         value={value}

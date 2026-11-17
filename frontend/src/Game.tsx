@@ -7,7 +7,7 @@ import { RichText, Swatch, money, seatColor } from "./ui";
 import type { Speed } from "./useGame";
 
 /** Which containers on the table the player may click right now, and the action each click plays. */
-function buildPick(snap: Snapshot): Pick {
+export function buildPick(snap: Snapshot): Pick {
   const ids = new Map<string, number>();
   const phase = snap.phase;
   for (const a of snap.legal) {
@@ -22,7 +22,7 @@ function buildPick(snap: Snapshot): Pick {
   return (player, area, lot, color) => ids.get(`${player}|${area}|${lot}|${color}`);
 }
 
-type Props = {
+export type Props = {
   snap: Snapshot;
   act: (id: number) => void;
   undo: () => void;
@@ -114,7 +114,7 @@ function PlayerCard({ snap, seat, player }: { snap: Snapshot; seat: number; play
   );
 }
 
-function SupplyPanel({ snap }: { snap: Snapshot }) {
+export function SupplyPanel({ snap }: { snap: Snapshot }) {
   const { containers, factories, warehouses } = snap.supply;
   return (
     <div className="side-panel">
@@ -133,7 +133,7 @@ function SupplyPanel({ snap }: { snap: Snapshot }) {
   );
 }
 
-function ScoringCard({ snap }: { snap: Snapshot }) {
+export function ScoringCard({ snap }: { snap: Snapshot }) {
   const ten = snap.players[snap.viewer].scoringCard;
   if (ten === null) return null;
   const order = [0, 1, 2, 3, 4].sort((a, b) => cardValue(ten, b, true) - cardValue(ten, a, true));

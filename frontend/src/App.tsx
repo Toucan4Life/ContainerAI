@@ -2,19 +2,22 @@ import { useState } from "react";
 import GameScreen from "./Game";
 import GameOver from "./GameOver";
 import Help from "./Help";
+import MobileGame from "./MobileGame";
 import RuleTip from "./RuleTip";
 import Setup from "./Setup";
 import { useGame } from "./useGame";
+import { useIsMobile } from "./useMedia";
 
 export default function App() {
   const { snap, act, undo, stepBack, start, leave, speed, setSpeed, error, dismissError } = useGame();
   const [help, setHelp] = useState(false);
+  const Screen = useIsMobile() ? MobileGame : GameScreen;
 
   return (
     <>
       <RuleTip />
       {snap ? (
-        <GameScreen
+        <Screen
           snap={snap}
           act={act}
           undo={undo}

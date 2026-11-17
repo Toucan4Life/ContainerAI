@@ -23,7 +23,7 @@ export default function RuleTip() {
     };
     const open = (el: HTMLElement) => {
       const key = el.dataset.rule as RuleKey | undefined;
-      if (!key || !(key in RULES)) return;
+      if (!key || !(key in RULES) || !el.isConnected) return;
       const box = el.getBoundingClientRect();
       const left = Math.min(Math.max(8, box.left), window.innerWidth - WIDTH - 8);
       const below = box.bottom + 8;
@@ -31,7 +31,8 @@ export default function RuleTip() {
       setTip({ key, note: el.dataset.ruleNote, top, left });
     };
     const over = (e: MouseEvent) => show(e.target);
-    const focus = (e: FocusEvent) => show(e.target);
+    // Tapping a control focuses it on touch screens, which must not pop a tip up.
+    const focus = (e: FocusEvent) => window.matchMedia("(hover: hover)").matches && show(e.target);
     const hide = () => {
       window.clearTimeout(timer);
       shown = null;

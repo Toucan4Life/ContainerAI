@@ -81,7 +81,7 @@ function Storage({ kind, used, limit }: { kind: District; used: number; limit: n
   return <span className={`storage ${used >= limit ? "storage-full" : ""}`} data-rule={kind === "factory" ? "factoryDistrict" : "harborDistrict"}>stock {used}/{limit}</span>;
 }
 
-function Harbor({ snap, seat, pick, act, mine }: Common & { seat: number; mine?: boolean }) {
+export function Harbor({ snap, seat, pick, act, mine }: Common & { seat: number; mine?: boolean }) {
   const p = snap.players[seat];
   const info = snap.seats[seat];
   const colour = seatColor(seat);
@@ -90,31 +90,34 @@ function Harbor({ snap, seat, pick, act, mine }: Common & { seat: number; mine?:
   const factoryStock = p.factoryLots.reduce((n, l) => n + total(l), 0) + p.reserveFactory;
   const harborStock = p.harborLots.reduce((n, l) => n + total(l), 0) + p.reserveHarbor;
 
-  const district = (kind: District, lots: Counts[]) => (
-    <div className="district">
-      <div className="district-head">
-        <span data-rule={kind === "factory" ? "factoryDistrict" : "harborDistrict"}>
-          {kind === "factory" ? <Factory size={13} /> : <Anchor size={13} />}
-          {kind === "factory" ? "FACTORIES" : "HARBOR"}
-        </span>
-        {kind === "factory" ? (
-          <Storage kind="factory" used={factoryStock} limit={factoryCount * 2} />
-        ) : (
-          <Storage kind="harbor" used={harborStock} limit={p.warehouses} />
-        )}
-      </div>
-      <div className={`lots lots-${lots.length}`}>
-        {lots.map((lot, i) => (
-          <div className="lot" key={i}>
-            <div className="lot-price">{money(lotPrice(kind, i))}</div>
-            <div className="container-stack">
-              <Chips counts={lot} pick={(c) => pick(seat, kind, i, c)} onPick={act} empty={<span />} />
+  const district = (kind: District, lots: Counts[]) => {
+    const picking = lots.some((lot, i) => lot.some((n, c) => n > 0 && pick(seat, kind, i, c) !== undefined));
+    return (
+      <div className={picking ? "district district-picking" : "district"}>
+        <div className="district-head">
+          <span data-rule={kind === "factory" ? "factoryDistrict" : "harborDistrict"}>
+            {kind === "factory" ? <Factory size={13} /> : <Anchor size={13} />}
+            {kind === "factory" ? "FACTORIES" : "HARBOR"}
+          </span>
+          {kind === "factory" ? (
+            <Storage kind="factory" used={factoryStock} limit={factoryCount * 2} />
+          ) : (
+            <Storage kind="harbor" used={harborStock} limit={p.warehouses} />
+          )}
+        </div>
+        <div className={`lots lots-${lots.length}`}>
+          {lots.map((lot, i) => (
+            <div className={total(lot) === 0 ? "lot lot-empty" : "lot"} key={i}>
+              <div className="lot-price">{money(lotPrice(kind, i))}</div>
+              <div className="container-stack">
+                <Chips counts={lot} pick={(c) => pick(seat, kind, i, c)} onPick={act} empty={<span />} />
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <section
@@ -150,7 +153,7 @@ function Harbor({ snap, seat, pick, act, mine }: Common & { seat: number; mine?:
   );
 }
 
-function IslandZone({ snap, pick, act }: Common) {
+export function IslandZone({ snap, pick, act }: Common) {
   return (
     <section className="zone zone-island">
       <header className="zone-head" data-rule="island"><Mountain size={15} /> THE ISLAND</header>
@@ -158,7 +161,7 @@ function IslandZone({ snap, pick, act }: Common) {
         {snap.players.map((p, seat) => (
           <div className="island-row" key={seat}>
             <i className="dot" style={{ background: seatColor(seat) }} title={snap.seats[seat].name} />
-            <div className="container-stack">
+            <div className="container-stack" data-name={snap.seats[seat].name}>
               <Chips
                 counts={p.island}
                 pick={(c) => pick(seat, "island", 0, c)}
@@ -176,7 +179,7 @@ function IslandZone({ snap, pick, act }: Common) {
   );
 }
 
-function OceanZone({ snap, pick, act }: Common) {
+export function OceanZone({ snap, pick, act }: Common) {
   return (
     <section className="zone zone-ocean">
       <header className="zone-head" data-rule="ocean"><Waves size={15} /> OPEN SEA</header>
@@ -188,7 +191,7 @@ function OceanZone({ snap, pick, act }: Common) {
   );
 }
 
-function BankZone({ snap, pick, act }: Common) {
+export function BankZone({ snap, pick, act }: Common) {
   const { containerLots, cashLots, auctions } = snap.bank;
   const tile = (kind: "container" | "cash", lot: number) =>
     auctions.find((a) => a.kind === kind && a.lot === lot);
@@ -229,7 +232,7 @@ function BankZone({ snap, pick, act }: Common) {
         {snap.players.map((p, seat) => (
           <div className="island-row" key={seat}>
             <i className="dot" style={{ background: seatColor(seat) }} title={snap.seats[seat].name} />
-            <div className="container-stack">
+            <div className="container-stack" data-name={snap.seats[seat].name}>
               <Chips
                 counts={p.holding}
                 pick={(c) => pick(seat, "holding", 0, c)}
