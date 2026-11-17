@@ -25,12 +25,14 @@ from torch.nn import functional as F
 
 from training import anchors as anchor_lib
 from training import ladder
-from training.env import BOUGHT, DONE, MERCHANT, PLACED_AT, RANDOM, REAL_BIDS, SIMPLE, SOLD, STALLED, TRADER, BatchEnv
+from training.env import BOUGHT, DONE, MERCHANT, PLACED_AT, RANDOM, REAL_BIDS, SIMPLE, SOLD, STALLED, TRADER, BARGAIN, DISCOUNTER, SOLITAIRE, BatchEnv
 from training.model import PolicyNet, export_weights, save_checkpoint
-from training.selfplay import LEARNER, STALL_REWARD, Roller, advantages, reward, table_stats
+from training.selfplay import LEARNER, STALL_REWARD, Roller, advantages, reward, table_stats, win_fraction
 
 SCRIPTED = [MERCHANT, SIMPLE, RANDOM]
-KIND_NAME = {MERCHANT: "merchant", SIMPLE: "simple", RANDOM: "random", TRADER: "trader"}
+KIND_NAME = {MERCHANT: "merchant", SIMPLE: "simple", RANDOM: "random", TRADER: "trader",
+             DISCOUNTER: "discounter", BARGAIN: "bargain", SOLITAIRE: "solitaire"}
+PEDDLER_SLOT = 900  # the frozen copy of a shipped net, clear of the snapshots (1..) and the anchor nets (1000..)
 
 
 class Run:
@@ -67,7 +69,9 @@ def imitation_table(rng):
     return players, kinds, seed_of(rng)
 
 
-def league_table(rng, frozen: list[int], scripted_share: float = 0.55, trader_share: float = 0.0):
+def league_table(rng, frozen: list[int], scripted_share: float = 0.55, trader_share: float = 0.0,
+                 seller_share: float = 0.0, solitaire_share: float = 0.0, merchant_share: float = 0.0,
+                 peddler_share: float = 0.0):
     players = int(rng.choice([3, 4, 5]))
     if rng.random() < 0.25:
         return players, [LEARNER] * players, seed_of(rng)
@@ -76,8 +80,16 @@ def league_table(rng, frozen: list[int], scripted_share: float = 0.55, trader_sh
     for s in range(players):
         if s in learners:
             kinds.append(LEARNER)
+        elif rng.random() < peddler_share:
+            kinds.append(PEDDLER_SLOT)
+        elif rng.random() < solitaire_share:
+            kinds.append(SOLITAIRE)
+        elif rng.random() < merchant_share:
+            kinds.append(MERCHANT)
         elif frozen and rng.random() >= scripted_share:
             kinds.append(int(rng.choice(frozen)))
+        elif rng.random() < seller_share:
+            kinds.append(int(rng.choice([DISCOUNTER, BARGAIN])))
         elif rng.random() < trader_share:
             kinds.append(TRADER)
         else:
@@ -204,6 +216,10 @@ def main() -> None:
     ap.add_argument("--buy-at-harbor", action="store_true",
                     help="the learner must buy something whenever it sails to a harbor: it may only sail "
                          "to one where something can be bought and may not decline; evaluations too")
+    ap.add_argument("--no-double-reprice", action="store_true",
+                    help="the learner may not reprice the same district twice in a row within a turn; evaluations too")
+    ap.add_argument("--bank-needs-load", action="store_true",
+                    help="the learner may only sail to the Bank when it has a container there to load; evaluations too")
     ap.add_argument("--no-same-turn-repay", action="store_true",
                     help="the learner may not repay a loan in a turn in which it requested one, so a "
                          "request is no longer free; evaluations too. The net's Rust bot needs "
@@ -239,6 +255,19 @@ def main() -> None:
     ap.add_argument("--trader-share", type=float, default=0.0,
                     help="chance that a scripted opponent seat is a trader (Merchant that buys only at fair prices "
                          "and prices its own containers around one lot) instead of Merchant, Simple or Random")
+    ap.add_argument("--seller-share", type=float, default=0.0,
+                    help="chance that a scripted opponent seat is a cheap seller (discounter: prices at $1 and buys "
+                         "at any price; bargain: prices around $2 and buys up to $3)")
+    ap.add_argument("--solitaire-share", type=float, default=0.0,
+                    help="chance that an opponent seat of a league table is Solitaire, drawn before the other kinds")
+    ap.add_argument("--merchant-share", type=float, default=0.0,
+                    help="chance that an opponent seat of a league table is Merchant, drawn before the other kinds "
+                         "(on top of the Merchants among the scripted seats)")
+    ap.add_argument("--peddler", default="",
+                    help="checkpoint of a frozen net that holds a permanent seat in the league, under the table rules "
+                         "the learner plays by (the shipped net the learner is to improve on)")
+    ap.add_argument("--peddler-share", type=float, default=0.0,
+                    help="chance that an opponent seat of a league table is the --peddler net, drawn first")
     ap.add_argument("--classic", action="store_true",
                     help="the classic rule: nobody at the table, scripted bots and frozen copies included, may call "
                          "the Bank. The ladder ratings were measured with the Bank, so the eval ELO is not comparable; "
@@ -250,7 +279,22 @@ def main() -> None:
     ap.add_argument("--island-weight", type=float, default=0.0,
                     help="share of the reward paid for the points the seat's score took from the Island, "
                          "the rest being the share of opponents beaten (`selfplay.island_term`)")
+    ap.add_argument("--win-slack", type=float, default=None,
+                    help="constrained mode: keep the learner's win share in the training league above its starting "
+                         "level (the mean of the first iterations) minus this slack. The interaction share of the "
+                         "reward is a dual variable, raised while the constraint holds and cut while it is broken")
+    ap.add_argument("--dual-lr", type=float, default=0.05, help="step of the --win-slack dual variable per iteration")
+    ap.add_argument("--dual-max", type=float, default=0.6, help="ceiling of the --win-slack dual variable")
+    ap.add_argument("--dual-warmup", type=int, default=6, help="iterations at the start used to measure the win share")
+    ap.add_argument("--no-margin", action="store_true", help="with --interaction-weight, the rest of the reward is the win share only, with no score margin")
     args = ap.parse_args()
+    if args.no_margin:
+        if not args.interaction_weight:
+            raise SystemExit("--no-margin needs --interaction-weight")
+        import training.selfplay as _sp
+        _sp.MARGIN_IN_INTERACTION_MIX = False
+    if args.win_slack is not None and not args.interaction_weight:
+        raise SystemExit("--win-slack needs --interaction-weight, the starting value of the dual variable")
     if args.interaction_weight and any((args.island_weight, args.min_trade, args.win_only, args.welfare_weight,
                                         args.geomean_weight, args.trade_weight)):
         raise SystemExit("--interaction-weight is exclusive with the other reward options")
@@ -304,12 +348,20 @@ def main() -> None:
         env.require_harbor_purchase(LEARNER)
         eval_env.require_harbor_purchase(LEARNER)
     penalty = 0.0
+    mu = args.interaction_weight
+    base_win: list[float] = []
     if args.min_bid:
         env.require_min_bid(LEARNER, args.min_bid)
         eval_env.require_min_bid(LEARNER, args.min_bid)
     if args.max_price:
         env.require_max_price(LEARNER, args.max_price)
         eval_env.require_max_price(LEARNER, args.max_price)
+    if args.no_double_reprice:
+        env.forbid_double_reprice(LEARNER)
+        eval_env.forbid_double_reprice(LEARNER)
+    if args.bank_needs_load:
+        env.require_bank_load(LEARNER)
+        eval_env.require_bank_load(LEARNER)
     if args.no_same_turn_repay:
         env.forbid_same_turn_repay(LEARNER)
         eval_env.forbid_same_turn_repay(LEARNER)
@@ -318,6 +370,11 @@ def main() -> None:
     if args.init:
         from training.model import load_checkpoint
         net = load_checkpoint(args.init, device)
+    peddler_slots: dict[int, torch.nn.Module] = {}
+    if args.peddler:
+        from training.model import load_checkpoint
+        peddler_slots[PEDDLER_SLOT] = load_checkpoint(args.peddler, device).eval()
+        env.mirror_rules(PEDDLER_SLOT, LEARNER)
     games = decisions = 0
     ckpts: list[tuple[str, float]] = []
     frozen: dict[int, torch.nn.Module] = {}
@@ -356,7 +413,7 @@ def main() -> None:
             ret, keep = outcome_returns(rec, status, players, scores, args.welfare_weight, args.win_only, args.geomean_weight,
                                       args.trade_weight, roller.finished.traded,
                                       args.min_trade, penalty, args.island_weight, roller.finished.breakdown[:, :, 1],
-                                      args.interaction_weight, roller.finished.interaction)
+                                      mu, roller.finished.interaction)
             data, _, _ = rec.tensors(keep)
             stats = imitate(net, opt, data)
             value_fit(net, data, ret[keep], opt)
@@ -381,7 +438,8 @@ def main() -> None:
             return anchor_lib.exploit_table(rng, target_slot)
     else:
         def next_table():
-            return league_table(rng, list(frozen) + list(anchor_slots), args.scripted_share, args.trader_share)
+            return league_table(rng, list(frozen) + list(anchor_slots), args.scripted_share, args.trader_share, args.seller_share,
+                                args.solitaire_share, args.merchant_share, args.peddler_share if args.peddler else 0.0)
     roller = Roller(env, next_table, device, rng)
     greedy = set(anchor_slots) if args.exploit and args.target_mode == "greedy" else set()
     while run.elapsed() < ppo_end:
@@ -389,7 +447,7 @@ def main() -> None:
                    elo=ckpts[-1][1] if ckpts else None)
         t = time.monotonic()
         rec = data = None  # last iteration's tensors would otherwise stay on the GPU during the rollout
-        policies = {0: net, **frozen, **anchor_slots}
+        policies = {0: net, **frozen, **anchor_slots, **peddler_slots}
         net.eval()
         rec, status, players, scores, tables = roller.collect(policies, target=env.n, mode="sample",
                                                               greedy_slots=greedy)
@@ -399,14 +457,14 @@ def main() -> None:
                                     welfare_weight=args.welfare_weight, win_only=args.win_only, geomean_weight=args.geomean_weight,
                                     trade_weight=args.trade_weight, traded=roller.finished.traded,
                                     min_trade=args.min_trade, penalty=penalty, island_weight=args.island_weight,
-                                    island=roller.finished.breakdown[:, :, 1], inter_weight=args.interaction_weight,
+                                    island=roller.finished.breakdown[:, :, 1], inter_weight=mu,
                                     inter=roller.finished.interaction)
         data, _, _ = rec.tensors(keep)
         mean_reward, finished = table_stats(status, players, scores, tables,
                                             welfare_weight=args.welfare_weight, win_only=args.win_only, geomean_weight=args.geomean_weight,
                                     trade_weight=args.trade_weight, traded=roller.finished.traded,
                                     min_trade=args.min_trade, penalty=penalty, island_weight=args.island_weight,
-                                    island=roller.finished.breakdown[:, :, 1], inter_weight=args.interaction_weight,
+                                    island=roller.finished.breakdown[:, :, 1], inter_weight=mu,
                                     inter=roller.finished.interaction)
         stats = ppo_update(net, opt, data, adv[keep], ret[keep])
         fin = roller.finished
@@ -426,10 +484,21 @@ def main() -> None:
             if seen:
                 trade_now = float(np.mean(seen))
                 penalty = float(np.clip(penalty + args.penalty_lr * (args.min_trade - trade_now) / args.min_trade, 0.0, 2.0))
+        win_now = None
+        if args.win_slack is not None:
+            mine_win = [win_fraction(scores[i], n)[s] for i, (n, kinds, *_rest) in enumerate(tables) if status[i] == DONE
+                        for s in range(n) if kinds[s] == LEARNER]
+            if mine_win:
+                win_now = float(np.mean(mine_win))
+                if len(base_win) < args.dual_warmup:
+                    base_win.append(win_now)
+                else:
+                    floor = float(np.mean(base_win)) - args.win_slack
+                    mu = float(np.clip(mu + args.dual_lr * (win_now - floor) / max(floor, 1e-3), 0.0, args.dual_max))
         games += finished
         decisions += len(data["state"])
         run.log(type="train", stage=stage_name, iter=it, games=games, decisions=decisions,
-                mean_reward=round(mean_reward, 4), penalty=round(penalty, 3), traded=trade_now, frozen=len(frozen), stalled=int((status == STALLED).sum()), **deal,
+                mean_reward=round(mean_reward, 4), penalty=round(penalty, 3), mu=round(mu, 3), win=win_now, traded=trade_now, frozen=len(frozen), stalled=int((status == STALLED).sum()), **deal,
                 games_per_sec=round(len(status) / (time.monotonic() - t), 1), **stats)
         it += 1
         if run.elapsed() - last_eval > args.eval_seconds:

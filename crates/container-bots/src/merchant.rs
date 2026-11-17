@@ -181,6 +181,18 @@ impl Merchant {
         }
     }
 
+    /// A Merchant that lays its containers around lot `target_lot` and buys only at lots that cost at
+    /// most `max_price` in a factory district. With a low `target_lot` it is a cheap seller.
+    pub fn seller(seed: u64, max_price: u32, target_lot: usize) -> Self {
+        Self {
+            trader: Some(Trader {
+                max_price,
+                target_lot,
+            }),
+            ..Self::new(seed)
+        }
+    }
+
     /// The tuned Merchant with a trader's prices.
     pub fn trader(seed: u64) -> Self {
         Self {

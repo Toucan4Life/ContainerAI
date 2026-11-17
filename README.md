@@ -65,8 +65,11 @@ The crate `crates/container-bots` holds the computer opponents. An opponent impl
 | `simple` | Simple | 263 | The legal action with the highest fixed priority, and a random one among equals. It produces, loads the ship, delivers to the Island and buys cheap containers, and bids a quarter of its cash in delivery auctions. It takes a loan only at $0, repays one when it holds $25 or more, and never builds, calls the Bank or buys out. |
 | `merchant` | Merchant | 932 | Simple's priorities with 32 parameters tuned by evolution strategy in self-play (`arena` crate, `tune` binary): it also builds, borrows and bids by cargo. |
 | `solitaire` | Solitaire | 1200 | The bot of `Solo_Variant_v1.1.pdf` played as an ordinary seat: sail, produce, buy from a factory, buy from a harbor, reprice, build, with a d20 for every price and purchase (`crates/container-bots/src/solitaire.rs`). It has real cash here, so it bids the rolled shipment value, takes a loan at $0 and repays when rich. A bot with nothing else to do rolls a d20 and calls the Bank on 11+ (fullest container lot, cash bid by the shipment table), and outbids an opponent's cash bid on 16+. Rated against Random, Simple and Merchant (6,000 arena games, 3 to 5 seats): 1069 ± 18 on that field, where Merchant is 800 and sits at 932 on the ladder, so about 1200 on the ladder scale. |
+| `peddler` | Peddler | 1900 | The net from `runs/exp/scratch_rules`, embedded as `weights/peddler.bin`: Haggler's recipe (from scratch, 30 minutes, `--interaction-weight 0.8 --no-margin --seller-share 0.35 --min-bid 3 --no-same-turn-repay`, seed 41) plus three rules on the learner's seat, `--buy-at-harbor --bank-needs-load --no-double-reprice`: it sails to an opponent's harbor only to buy there (and then buys), to the Bank only with a container to pick up and room for it, and never reprices the same district twice in a row in a turn. The bot keeps all five rules (`Neural::without_same_turn_repay`, `with_min_bid(3)` and `with_table_rules`); opponents are not bound by them. On the nets pool it lists 68% of its containers at $3 or less (Dealer 31%, Magnate 3%, Consortium 1%), buys 14.2 containers a game from opponents (Magnate 15.8, Consortium 15.5, Haggler 13.2, Dealer 11.1) and delivers 10.9 times a game (the others 7.5-7.9). It beats Merchant in every game (600), Solitaire at 3 players (.99, but 4% of those tables stall) and at 4 (.66), and is barely ahead of four Solitaires at 5 (.24 against a fair .20); it wins about 6% against Magnate, Dealer and Consortium. Haggler is the stronger bot against the weak ones. Its rating is the trainer's eval (1024 games, the rules on its seat only), so it is not comparable with unrestricted ratings; one seed. |
+| `haggler` | Haggler | 2000 | The net from `runs/exp/scratch_w08`, embedded as `weights/haggler.bin`: trained from scratch (short imitation start, no warm start) for 30 minutes with `--interaction-weight 0.8 --no-margin --seller-share 0.35 --min-bid 3 --no-same-turn-repay`, so the reward is 80% dealing with opponents and 20% win share, with no score margin. Same two rules as Dealer. Lists about 3 containers in 4 at $3 or less, beats Merchant and the solitaire variants, loses to Magnate, Dealer and Consortium (about 4% win share against them). Its rating is the trainer's eval; one seed. |
 | `broker` | Broker | 2150 | The net from `runs/scratch_constrained/final.pt`, embedded as `weights/broker.bin`, trained from scratch with `--no-same-turn-repay --min-bid 3 --min-trade 45 --scripted-share 0.7`. The bot keeps both rules: it bids at least $3 to open a delivery auction and never repays a loan the turn it takes it. Its rating is the trainer's final eval (1024 games), not `anchors rate`. |
 | `dealer` | Dealer | 2170 | The net from `runs/inter_B/final.pt`, embedded as `weights/dealer.bin`: Broker trained 45 more minutes in league self-play with `--interaction-weight 0.5`. Same two rules as Broker (bid at least $3 to open a delivery auction, no same-turn repay). It buys from opponents, bids on their deals, and lists about 4 containers in 10 at $3 or less. Its rating is the trainer's eval, not `anchors rate`. |
+| `peddler2` | Peddler v2 | 2225 | The net from `runs/exp/scratch_rules_sol_ft`, embedded as `weights/peddler2.bin`: Peddler (`runs/exp/scratch_rules/final.pt`) trained 20 more minutes (warm start, no imitation, seed 44) with the same reward and rules, in a league that seats Solitaire (`--solitaire-share 0.2`), extra Merchants (`--merchant-share 0.15`) and a frozen copy of Peddler under the learner's rules (`--peddler runs/exp/scratch_rules/final.pt --peddler-share 0.15`). The bot keeps the same five rules as Peddler (`Neural::without_same_turn_repay`, `with_min_bid(3)` and `with_table_rules`); opponents are not bound by them. On the nets pool it lists about 80% of its containers at $3 or less, buys 15.0 containers a game from opponents (Magnate 16.5, Consortium 16.3, Dealer 11.0), sells 17.5 (they sell 12.8-14.5) and delivers 11.0 times a game (they deliver 7.0-7.8). It beats Merchant in 99.8% of the games (600) and Solitaire at 3, 4 and 5 players (.99, 1.00, .97; 2% of the 3-player tables with two Solitaires stall), and wins .52 of the games against Magnate, .37 against Consortium and .27 against Dealer (±.04; an even share is .26; the three together .39 against Peddler's .06). Its rating is the trainer's eval (2225.7, 1024 games, the rules on its seat only), so it is not comparable with unrestricted ratings, and it may understate the bot against the strong nets; one seed. `peddler` is kept as it was. |
 | `magnate` | Magnate | 2280 | The net from `runs/defense_run2_vs_exploiter_30m/final.pt`, embedded as `weights/magnate.bin`. It plays the action it rates best and never repeats itself in an identical position (see [Stalls and memory safety](#stalls-and-memory-safety)). It beats Merchant about 99.9% of the time. |
 
 ```sh
@@ -478,10 +481,17 @@ UI bots, so a net trained this way needs the same filter in its Rust bot before 
   and buy-outs stay legal.
 - `--buy-at-harbor`: forbids sailing to a harbor where nothing can be bought, and forbids
   `DoneBuying` with an empty purchase list at a harbor.
+- `--bank-needs-load`: forbids sailing to the Bank unless there is a container in the holding area to pick
+  up and room for it on the ship.
+- `--no-double-reprice`: forbids repricing a district straight after the same seat repriced that district,
+  in the same turn. Any other action in between, or another district, is fine.
 - `--no-same-turn-repay`: removes `RepayLoan` in a turn in which the seat has requested a loan, so a request
   is no longer free. Loans a bidder takes on another seat's turn do not count. A deployed net trained with it
   plays under `Neural::without_same_turn_repay`; an unretrained net must not, as it keeps the loans it took.
 - If a filter would leave no legal move it is ignored for that decision.
+- A net trained with `--buy-at-harbor --bank-needs-load --no-double-reprice` plays under `Neural::with_table_rules`
+  (Peddler and Peddler v2 do, and the arena loads a candidate that way with `netr:PATH`). The rule filter bars exactly what the
+  environment bars, which a bot test checks against the engine.
 - Ratings under restrictions are not comparable to unrestricted ones.
 
 `--welfare-weight W` (0..1, default 0) moves that share of the learner's reward from its own rank and
@@ -509,6 +519,12 @@ scratch runs the blended rewards below did little, so treat them as experiments)
   pays only up to $2-$4 per container (fixed per game) and prices its own around one lot ($1-$4). Merchant buys at any
   price and sells at $1, which teaches a net that pricing at the maximum costs nothing. `audit_interaction --stand-in trader`
   audits against one.
+- `--solitaire-share P`, `--merchant-share P`: the chance that an opponent seat of a league table is Solitaire (seat kind
+  `-7`, the solitaire-variant bot) or Merchant. Both are drawn before the other kinds, so Merchant also keeps its place
+  among the scripted seats.
+- `--peddler CKPT`, `--peddler-share P`: a permanent frozen net in the league (slot 900), drawn first with chance P for
+  each opponent seat. It plays under the table rules the learner plays by (`BatchEnv.mirror_rules`), as the shipped bot
+  does; the other frozen snapshots and the anchor nets stay unrestricted.
 - `--island-weight W`: that share of the reward is the points the seat's score took from the Island (`selfplay.island_term`,
   1 at 80 points), the rest the share of opponents beaten. Exclusive with the other reward options.
 - `--classic`: the classic rule. Nobody at the table may call the Bank (scripted bots and frozen copies included), so
@@ -790,6 +806,8 @@ above about 1.6 and never stops or changes the reward. Mid-run numbers are noisy
 Not implemented yet. The sweep script used for the table is not in the repository.
 
 #### What is still open
+
+A later program (reproducible interaction baselines with the `interact` binary, cheap-seller archetypes and a first controlled experiment) is in [`docs/interaction_program.md`](docs/interaction_program.md).
 
 0. **Implement the mid-run copy probe** described above, and add `--players`, `--copies` and `--length` to
    `training.interplay`.

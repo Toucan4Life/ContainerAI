@@ -28,6 +28,10 @@ const GLOBAL_DIM: usize = 3 + 2 * MAX_PLAYERS + NUM_COLORS + BANK_DIM + NUM_COLO
 /// Length of the state vector.
 pub const STATE_DIM: usize = MAX_PLAYERS * PLAYER_DIM + NUM_COLORS + GLOBAL_DIM + PHASE_KINDS + PHASE_EXTRA;
 
+/// Length of the state vector of a net that also reads the opponent memory ([`crate::memory`]), whose
+/// numbers follow the usual state.
+pub const STATE_DIM_MEM: usize = STATE_DIM + crate::memory::MEM_DIM;
+
 /// Action kinds the type one-hot tells apart.
 const KINDS: usize = 26;
 /// Length of one action's vector.
@@ -263,6 +267,13 @@ pub fn encode_state(obs: &Observation, buf: &mut [f32]) {
     out.one_hot(PHASE_KINDS, Some(phase_index(&obs.phase)));
     phase_extra(&mut out, obs);
     debug_assert_eq!(out.pos, STATE_DIM, "state layout");
+}
+
+/// Writes the state vector of a net with memory, [`STATE_DIM_MEM`] numbers: the usual state, then the memory.
+pub fn encode_state_mem(obs: &Observation, memory: &crate::memory::Memory, buf: &mut [f32]) {
+    assert!(buf.len() >= STATE_DIM_MEM);
+    encode_state(obs, buf);
+    memory.encode(obs.viewer, obs.num_players, &mut buf[STATE_DIM..STATE_DIM_MEM]);
 }
 
 fn color_one_hot(out: &mut Out, color: Option<Color>) {

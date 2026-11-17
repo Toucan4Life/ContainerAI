@@ -1,6 +1,6 @@
 import numpy as np
 
-from training.env import DONE, MERCHANT, PENDING, RANDOM, SIMPLE, BatchEnv, win_fraction
+from training.env import DONE, MERCHANT, PENDING, RANDOM, SIMPLE, SOLITAIRE, BatchEnv, win_fraction
 
 
 def play_scripted(n=16, players=4, kinds=(MERCHANT, SIMPLE, RANDOM, SIMPLE), seed=1):
@@ -17,6 +17,12 @@ def test_scripted_games_finish():
     assert (status == DONE).all()
     assert (players == 4).all()
     assert (scores[:, :4].sum(axis=1) != 0).any()
+
+
+def test_solitaire_seats_finish_their_games():
+    env = play_scripted(players=3, kinds=(SOLITAIRE, SOLITAIRE, MERCHANT))
+    status, _, _ = env.results()
+    assert (status == DONE).all()
 
 
 def test_slots_get_decisions_and_can_finish_a_game():

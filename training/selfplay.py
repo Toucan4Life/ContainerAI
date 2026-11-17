@@ -54,6 +54,9 @@ FAIR_PRICE = 3  # a container left on the ship is worth $3 at the end, so a buye
 INTERACTION_WEIGHTS = (0.2, 0.2, 0.2, 0.4)  # bought, bids, sold, fair prices
 
 
+MARGIN_IN_INTERACTION_MIX = True  # `train --no-margin` clears it: the share that is not interaction is the win share alone
+
+
 def interaction_term(inter, seat: int) -> float:
     """0..1 for how much the seat deals with the others: it buys containers from their factories and
     harbors, bids at least $2 on their deliveries, sells its own containers to them, and lays its
@@ -83,6 +86,8 @@ def reward(scores: np.ndarray, players: int, welfare_weight: float = 0.0, win_on
         s = scores[:players].astype(np.float64)
         margin = (s - (s.sum() - s) / (players - 1)) / 50.0
         own = 0.6 * win_fraction(scores, players) + 0.4 * (0.5 + 0.5 * np.tanh(margin))
+        if not MARGIN_IN_INTERACTION_MIX:
+            own = win_fraction(scores, players)
         return (1.0 - inter_weight) * own + inter_weight * np.array([interaction_term(inter, p) for p in range(players)])
     if win_only:
         return win_fraction(scores, players)
@@ -228,7 +233,8 @@ class GraphedForward:
 
     @staticmethod
     def _pass(net, st, ac, mk):
-        logits, value = net(st, ac, mk, dense=True)
+        # A net without memory reads the usual state, which is the front of a row that carries the memory.
+        logits, value = net(st[:, :net.dims[0]], ac, mk, dense=True)
         gumbel = -torch.log(-torch.log(torch.rand_like(logits).clamp_(1e-10, 1.0)))
         return logits, value, (logits + gumbel).argmax(dim=1), logits.argmax(dim=1)
 

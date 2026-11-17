@@ -94,6 +94,9 @@ pub fn play_outcome(
         let obs = game.observation(seat)?;
         let legal = game.legal_actions();
         let action = bots[seat].choose(&obs, &legal);
+        for bot in bots.iter_mut() {
+            bot.observe(seat, &obs, action);
+        }
         game.apply(action).ok()?;
     }
     if game.is_terminal() {

@@ -249,3 +249,115 @@ h1 em { color: #f5b84b; font-style: normal; }
 .table-waters { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .table-waters > * { flex: 1; }
 .zone-island .island-rows { grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px 14px; }
+
+/* Desktop (>=1500px): whole table fits one screen, opponents on top, own harbor + shared zones below */
+@media (min-width: 1500px) {
+  .game-shell { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  .game-layout { flex: 1; min-height: 0; grid-template-columns: 230px minmax(0, 1fr) 320px; }
+  .sidebar { overflow-y: auto; padding: 16px 14px; }
+  .player-list { gap: 4px; }
+  .player-card { padding: 8px 10px; }
+  .player-stats { margin-top: 8px; }
+  .game-layout .board-area { padding: 12px; min-height: 0; overflow: hidden; display: block; }
+  .table { height: 100%; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: auto minmax(0, 1fr); gap: 10px; }
+  .table-seats, .table-middle, .table-waters { display: contents; }
+  .table-seats > .harbor { grid-row: 1; }
+  .table > .harbor-mine { grid-row: 2; grid-column: 1; }
+  .table-waters > .zone-island { grid-row: 2; grid-column: 2; }
+  .table-waters > .zone-ocean { grid-row: 2; grid-column: 3; }
+  .table-middle > .zone-bank { grid-row: 2; grid-column: 4; }
+  .harbor, .zone { min-height: 0; overflow: auto; padding: 10px; }
+  .harbor .lot { min-height: 52px; padding: 5px; }
+  .harbor .lots { margin-top: 4px; }
+  .district { margin-top: 6px; }
+  .harbor-foot { margin-top: 6px; }
+  .holding, .dock { min-height: 44px; padding: 6px; }
+  .harbor-mine .container { width: 15px; height: 20px; }
+  .zone-island .island-rows { grid-auto-flow: row; grid-auto-columns: auto; }
+  .zone-ocean .zone-ships { flex-direction: column; flex-wrap: nowrap; align-content: stretch; align-items: stretch; justify-content: center; }
+  .zone-ocean .ship-token { flex: 0 0 auto; max-width: none; }
+  .zone-bank .island-rows { grid-template-columns: 1fr; }
+  .bank-lots { gap: 6px; }
+  .right-column { max-height: none; height: 100%; position: static; padding: 12px; }
+  .log-list { max-height: none; }
+}
+@media (min-width: 1500px) {
+  .table { grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+  .harbor { display: flex; flex-direction: column; }
+  .harbor .district { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .harbor .district .lots { flex: 1; }
+  .harbor .lot { min-height: 0; }
+  .harbor .lot-price { font-size: 13px; }
+  .zone-island .island-rows { flex: 1; align-content: space-evenly; }
+  .zone-ocean .zone-ships { gap: 8px; }
+  .zone-ocean .ship-token { padding: 8px 10px; }
+  .zone-bank { justify-content: space-between; }
+}
+@media (min-width: 1500px) {
+  .menu-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .menu-tabs .action-button { min-width: 0; padding: 8px 6px; gap: 5px; }
+  .right-column { min-width: 0; overflow-x: hidden; }
+}
+@media (min-width: 1500px) {
+  .harbor .district .lots { flex: 1 1 0; max-height: 120px; }
+  .harbor .harbor-foot { flex: 1; display: flex; flex-direction: column; }
+  .harbor .harbor-foot .dock { flex: 1; }
+}
+@media (min-width: 1500px) and (max-height: 960px) {
+  .zone-ocean .zone-ships { gap: 5px; }
+  .zone-ocean .ship-token { padding: 5px 8px; min-height: 0; }
+  .zone-ocean .ship-token .container-stack { min-height: 0; padding-top: 2px; }
+  .zone-bank .board-label { margin-top: 2px; }
+  .zone-bank .island-rows { gap: 3px; }
+  .zone-bank .bank-lot { padding: 4px 6px; }
+  .zone-bank .island-row { min-height: 0; }
+}
+@media (min-width: 1500px) and (max-height: 960px) {
+  .zone-ocean .ship-token { padding: 3px 8px; }
+  .zone-ocean .zone-ships { gap: 4px; }
+  .zone-ocean { gap: 4px; }
+}
+@media (min-width: 1500px) {
+  .zone-bank .zone-ships, .zone-island .zone-ships, .dock .zone-ships { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; flex: none; }
+  .zone-bank .ship-token, .zone-island .ship-token, .dock .ship-token { min-width: 0; flex: none; padding: 3px 7px; display: flex; align-items: center; gap: 8px; border-width: 1.5px; }
+  .zone-bank .ship-token-head, .zone-island .ship-token-head, .dock .ship-token-head { flex: none; }
+  .zone-bank .ship-token .container-stack, .zone-island .ship-token .container-stack, .dock .ship-token .container-stack { min-height: 0; padding-top: 0; flex-wrap: nowrap; }
+  .zone-bank .ship-token .empty-lot, .zone-island .ship-token .empty-lot, .dock .ship-token .empty-lot { display: none; }
+  .zone-bank .island-rows { gap: 3px; }
+  .zone-bank .island-row { min-height: 0; }
+  .zone-bank .bank-lots .container-stack { flex-wrap: nowrap; }
+}
+@media (min-width: 1500px) {
+  .zone-bank .zone-ships, .zone-island .zone-ships, .dock .zone-ships { display: flex; flex-wrap: wrap; }
+  .zone-bank .ship-token, .zone-island .ship-token, .dock .ship-token { flex: 0 0 auto; max-width: 100%; }
+}
+@media (min-width: 1500px) {
+  .zone-bank { gap: 4px; }
+  .zone-bank .bank-lot { padding: 3px 6px; gap: 1px; }
+  .zone-bank .bank-lot .container-stack { padding-top: 1px; }
+  .zone-bank .board-label { margin-top: 2px; }
+  .zone-bank .island-row { min-height: 0; }
+  .zone-bank .island-rows { gap: 1px; }
+  .zone-bank .zone-ships { margin-top: 0; }
+}
+@media (min-width: 1500px) and (max-height: 960px) {
+  .zone-bank .island-rows { grid-template-columns: 1fr 1fr; gap: 1px 10px; }
+  .zone-bank .bank-lot .container { width: 12px; height: 16px; }
+  .zone-bank .bank-lot { padding: 2px 6px; }
+  .zone-bank .ship-token { padding: 2px 6px; }
+  .zone-bank .ship-token .container { width: 12px; height: 16px; }
+  .zone-bank .zone-ships { gap: 3px; }
+}
+@media (min-width: 1500px) and (max-height: 960px) {
+  .zone-bank .ship-token-head svg { display: none; }
+  .zone-bank .ship-token { gap: 5px; }
+  .zone-bank .ship-token .container-stack { gap: 2px; }
+}
+@media (min-width: 1500px) and (max-height: 960px) {
+  .zone-bank { padding: 8px 10px; gap: 2px; }
+  .zone-bank .zone-head { margin-bottom: 2px; }
+}
+.rule-tip { position: fixed; z-index: 80; max-height: 70vh; overflow: hidden; padding: 10px 12px; border: 1px solid #323b50; border-radius: 8px; background: #11151f; box-shadow: 0 8px 24px #000a; font-size: 12px; line-height: 1.4; color: #bbc1d0; pointer-events: none; }
+.rule-tip b { color: #f5b84b; font: 500 10px "DM Mono"; letter-spacing: .1em; text-transform: uppercase; }
+.rule-tip em { display: block; margin-top: 4px; color: #e9ebf2; font-style: normal; }
+.rule-tip ul { margin: 6px 0 0; padding-left: 16px; display: grid; gap: 3px; }

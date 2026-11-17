@@ -7,13 +7,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use container_engine::action::Action;
+use container_engine::action::{Action, District};
+use container_engine::state::{SHIP_CAPACITY, ShipLocation};
 use container_engine::observation::{Observation, PhaseView};
 use container_engine::phase::Phase;
 use container_engine::rng::Rng;
 
 use crate::{Opponent, is_same_turn_repay};
-use crate::features::{ACTION_DIM, MAX_ACTIONS, STATE_DIM, encode_action, encode_state, thin};
+use crate::features::{ACTION_DIM, MAX_ACTIONS, STATE_DIM, STATE_DIM_MEM, encode_action, encode_state, encode_state_mem, thin};
+use crate::memory::Memory;
 
 const MAGIC: &[u8; 4] = b"CNTW";
 
@@ -45,6 +47,8 @@ impl Layer {
 #[derive(Clone, Debug)]
 pub struct Net {
     hidden: usize,
+    /// Whether the net reads the opponent memory after the usual state.
+    memory: bool,
     t1: Layer,
     t2: Layer,
     ws: Layer,
@@ -69,7 +73,7 @@ impl Net {
         }
         let word = |i: usize| u32::from_le_bytes(bytes[4 + 4 * i..8 + 4 * i].try_into().unwrap()) as usize;
         let (state, action, hidden) = (word(0), word(1), word(2));
-        if state != STATE_DIM || action != ACTION_DIM {
+        if (state != STATE_DIM && state != STATE_DIM_MEM) || action != ACTION_DIM {
             return Err(NetError::WrongShape);
         }
         let mut pos = 16;
@@ -91,6 +95,7 @@ impl Net {
         };
         let net = Net {
             hidden,
+            memory: state == STATE_DIM_MEM,
             t1: layer(state, hidden)?,
             t2: layer(hidden, hidden)?,
             ws: layer(hidden, hidden)?,
@@ -104,6 +109,11 @@ impl Net {
             return Err(NetError::WrongShape);
         }
         Ok(net)
+    }
+
+    /// Whether the net reads the opponent memory.
+    pub fn reads_memory(&self) -> bool {
+        self.memory
     }
 
     /// Logit of each action (one row of `ACTION_DIM` numbers per action) and the state's value.
@@ -158,6 +168,16 @@ pub struct Neural {
     max_price: u32,
     /// Whether the net never sees a Bank call (starting or outbidding an auction).
     no_bank: bool,
+    /// Whether sailing to a harbor must open a purchase that is then not declined.
+    harbor_must_buy: bool,
+    /// Whether the net sails to the Bank only with a container to load there (and room for it).
+    bank_needs_load: bool,
+    /// Whether the net never reprices the district it has just repriced, in the same turn.
+    no_double_reprice: bool,
+    /// District and actions left after the net's last main action, if that was a Reprice.
+    last_reprice: Option<(District, u8)>,
+    /// What the seats have done so far in this game, read by a net with memory.
+    memory: Memory,
 }
 
 impl Neural {
@@ -173,7 +193,22 @@ impl Neural {
             min_bid: 0,
             max_price: 0,
             no_bank: false,
+            harbor_must_buy: false,
+            bank_needs_load: false,
+            no_double_reprice: false,
+            last_reprice: None,
+            memory: Memory::default(),
         }
+    }
+
+    /// Plays under the table rules a net trained with `--buy-at-harbor --bank-needs-load --no-double-reprice`
+    /// knows: sailing to a player means buying from them, sailing to the Bank means loading there, and
+    /// no repricing the same district twice in a row within a turn.
+    pub fn with_table_rules(mut self) -> Self {
+        self.harbor_must_buy = true;
+        self.bank_needs_load = true;
+        self.no_double_reprice = true;
+        self
     }
 
     /// Takes repaying a loan off the table on a turn in which the net has requested one. A net
@@ -214,6 +249,40 @@ impl Neural {
         }
         if self.no_same_turn_repay && is_same_turn_repay(obs.turn.loans_requested, action) {
             return true;
+        }
+        if let (PhaseView::Open(Phase::Main), Some(me)) = (obs.phase, obs.players.get(obs.viewer)) {
+            match action {
+                Action::Reprice(d) if self.no_double_reprice => {
+                    if self.last_reprice == Some((d, obs.turn.actions_left)) {
+                        return true;
+                    }
+                }
+                Action::Sail(ShipLocation::Bank) if self.bank_needs_load => {
+                    if me.holding.is_empty() || SHIP_CAPACITY <= me.ship.total() {
+                        return true;
+                    }
+                }
+                Action::Sail(ShipLocation::Harbor(owner)) if self.harbor_must_buy => {
+                    let cash = me.cash.unwrap_or(0);
+                    let can_buy = owner != obs.viewer
+                        && owner < obs.num_players
+                        && me.ship.total() < SHIP_CAPACITY
+                        && obs.players[owner]
+                            .harbor_lots
+                            .iter()
+                            .enumerate()
+                            .any(|(lot, c)| !c.is_empty() && District::Harbor.lot_price(lot) <= cash);
+                    if !can_buy {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let (PhaseView::Open(Phase::Buy(b)), Action::DoneBuying) = (obs.phase, action) {
+            if self.harbor_must_buy && b.optional && b.district == District::Harbor && b.bought.is_empty() {
+                return true;
+            }
         }
         if let (PhaseView::Open(Phase::Arrange(a)), Action::Place(lot)) = (obs.phase, action) {
             if self.max_price > 0 && a.district.lot_price(lot) > self.max_price {
@@ -271,8 +340,12 @@ impl Opponent for Neural {
             legal
         };
         let kept = thin(legal.len());
-        let mut state = vec![0.0; STATE_DIM];
-        encode_state(obs, &mut state);
+        let mut state = vec![0.0; if self.net.memory { STATE_DIM_MEM } else { STATE_DIM }];
+        if self.net.memory {
+            encode_state_mem(obs, &self.memory, &mut state);
+        } else {
+            encode_state(obs, &mut state);
+        }
         let mut acts = vec![0.0; kept.len() * ACTION_DIM];
         for (k, &i) in kept.iter().enumerate() {
             encode_action(obs, legal[i], &mut acts[k * ACTION_DIM..(k + 1) * ACTION_DIM]);
@@ -294,7 +367,20 @@ impl Opponent for Neural {
             }
             k
         };
-        legal[kept[pick]]
+        let action = legal[kept[pick]];
+        if obs.phase == PhaseView::Open(Phase::Main) {
+            self.last_reprice = match action {
+                Action::Reprice(d) => Some((d, obs.turn.actions_left.saturating_sub(1))),
+                _ => None,
+            };
+        }
+        action
+    }
+
+    fn observe(&mut self, _mover: usize, obs: &Observation, action: Action) {
+        if let (true, PhaseView::Open(phase)) = (self.net.memory, &obs.phase) {
+            self.memory.record(_mover, phase, action);
+        }
     }
 }
 
@@ -371,6 +457,49 @@ mod tests {
         obs.turn.loans_requested = 0;
         let allowed = picks(Neural::new(net, 0, 0.0).without_same_turn_repay(), &obs, &legal);
         assert!(allowed.contains(&Action::RepayLoan), "nothing was requested, so repaying is fine");
+    }
+
+    #[test]
+    fn the_table_rules_bar_exactly_the_sails_that_open_nothing() {
+        use crate::solitaire::Solitaire;
+        let net = Arc::new(Net::from_bytes(include_bytes!("../weights/peddler.bin")).unwrap());
+        let checker = Neural::new(net.clone(), 0, 0.0).with_table_rules();
+        let (mut opens, mut idle) = (0, 0);
+        for seed in 0..4 {
+            let mut game = Game::new(GameConfig::new(4).with_seed(seed)).unwrap();
+            let mut players: Vec<Box<dyn Opponent>> = (0..4)
+                .map(|s| -> Box<dyn Opponent> {
+                    if s < 2 {
+                        Box::new(Neural::new(net.clone(), s, 0.0).with_table_rules())
+                    } else {
+                        Box::new(Solitaire::new(s))
+                    }
+                })
+                .collect();
+            for _ in 0..2_500 {
+                if game.is_terminal() {
+                    break;
+                }
+                let viewer = game.current_player();
+                let obs = game.observation(viewer).unwrap();
+                let legal = game.legal_actions();
+                if obs.phase == PhaseView::Open(Phase::Main) {
+                    for &action in &legal {
+                        if !matches!(action, Action::Sail(ShipLocation::Bank | ShipLocation::Harbor(_))) {
+                            continue;
+                        }
+                        let mut after = game.clone();
+                        after.apply(action).unwrap();
+                        let does_something = matches!(after.phase, Phase::Buy(_) | Phase::Load(_));
+                        assert_eq!(checker.forbidden(&obs, action), !does_something, "{action:?}");
+                        if does_something { opens += 1 } else { idle += 1 }
+                    }
+                }
+                let action = players[viewer].choose(&obs, &legal);
+                game.apply(action).unwrap();
+            }
+        }
+        assert!(opens > 0 && idle > 0, "{opens} {idle}");
     }
 
     #[test]

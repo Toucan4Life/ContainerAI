@@ -106,9 +106,9 @@ function PlayerCard({ snap, seat, player }: { snap: Snapshot; seat: number; play
         {!active && deciding && <span className="turn-pill pill-deciding">DECIDING</span>}
       </div>
       <div className="player-stats">
-        <span title="Cash"><Coins size={14} /> {player.cash === null ? "hidden" : money(player.cash)}</span>
-        <span title="Loans"><Landmark size={14} /> {player.loans}</span>
-        <span title="Warehouses"><Warehouse size={14} /> {player.warehouses}</span>
+        <span data-rule="cash"><Coins size={14} /> {player.cash === null ? "hidden" : money(player.cash)}</span>
+        <span data-rule="loans"><Landmark size={14} /> {player.loans}</span>
+        <span data-rule="warehouses"><Warehouse size={14} /> {player.warehouses}</span>
       </div>
     </div>
   );
@@ -118,7 +118,7 @@ function SupplyPanel({ snap }: { snap: Snapshot }) {
   const { containers, factories, warehouses } = snap.supply;
   return (
     <div className="side-panel">
-      <div className="panel-heading"><span><Package size={15} /> SUPPLY</span></div>
+      <div className="panel-heading" data-rule="supply"><span><Package size={15} /> SUPPLY</span></div>
       <div className="supply-colors">
         {containers.map((n, color) => (
           <span key={color} className={n === 0 ? "supply-empty" : ""} title={`${COLOR_LABELS[color]} containers left`}>
@@ -139,7 +139,7 @@ function ScoringCard({ snap }: { snap: Snapshot }) {
   const order = [0, 1, 2, 3, 4].sort((a, b) => cardValue(ten, b, true) - cardValue(ten, a, true));
   return (
     <div className="side-panel">
-      <div className="panel-heading"><span>YOUR SCORING CARD</span><small>SECRET</small></div>
+      <div className="panel-heading" data-rule="scoringCard"><span>YOUR SCORING CARD</span><small>SECRET</small></div>
       <div className="card-values">
         {order.map((color) => (
           <span key={color}>

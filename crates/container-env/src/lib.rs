@@ -4,14 +4,15 @@
 //! answers, usually with a neural net. The calls go: `reset` the games, `advance` them to the next
 //! decision of a slot, `observe` what the slots see, then `step` with the choices and repeat.
 //!
-//! Seat kinds in `reset`: `-1` random, `-2` simple, `-3` merchant, `-4` trader (see `merchant::Trader`), `>= 0` a slot, whose number tells
+//! Seat kinds in `reset`: `-1` random, `-2` simple, `-3` merchant, `-4` trader (see `merchant::Trader`), `-5` discounter and `-6` bargain (cheap sellers, see `container_bots::ARCHETYPES`), `-7` solitaire, `>= 0` a slot, whose number tells
 //! Python which policy answers.
 
 use std::os::raw::c_int;
 
 use container_bots::features::{
-    ACTION_DIM, MAX_ACTIONS, STATE_DIM, encode_action, encode_state, thin,
+    ACTION_DIM, MAX_ACTIONS, STATE_DIM, STATE_DIM_MEM, encode_action, encode_state, encode_state_mem, thin,
 };
+use container_bots::memory::Memory;
 use container_bots::merchant::Merchant;
 use container_bots::{Opponent, create, is_same_turn_repay};
 use container_engine::action::{Action, District};
@@ -53,9 +54,26 @@ const REAL_BID: u32 = 2;
 
 type Interaction = [[i32; INTERACTION]; MAX_PLAYERS];
 
+/// The seat, district and actions left after the last Reprice, while it is the latest main action.
+type LastReprice = Option<(usize, District, u8)>;
+
 /// Applies `action`, crediting both seats of a delivery that is sold to a player with its bid, and counting
 /// the purchases, bids and prices of the seats.
-fn apply(game: &mut Game, traded: &mut [i32; MAX_PLAYERS], inter: &mut Interaction, action: Action) {
+fn apply(
+    game: &mut Game,
+    traded: &mut [i32; MAX_PLAYERS],
+    inter: &mut Interaction,
+    memory: &mut Memory,
+    last_reprice: &mut LastReprice,
+    action: Action,
+) {
+    memory.record(game.current_player(), &game.phase, action);
+    if game.phase == Phase::Main {
+        *last_reprice = match action {
+            Action::Reprice(district) => Some((game.state.active_player, district, game.turn.actions_left.saturating_sub(1))),
+            _ => None,
+        };
+    }
     match (game.phase, action) {
         (Phase::Decide(d), Action::Accept(winner)) => {
             traded[d.deliverer] += d.top as i32;
@@ -121,19 +139,25 @@ struct Rules {
     buy_at_harbor: Option<i32>,
     /// The slot that may not repay a loan in a turn in which it requested one.
     no_same_turn_repay: Option<i32>,
+    /// The slot that may not reprice the same district twice in a row within a turn.
+    no_double_reprice: Option<i32>,
+    /// The slot that may only sail to the Bank when it has a container there to load (and room for it).
+    bank_needs_load: Option<i32>,
     /// The slot that must bid at least `min_bid` (or all its cash, if less) in the first round of a delivery auction.
     min_bid: Option<i32>,
     min_bid_amount: u32,
     /// The slot that may not lay a container out in a lot dearer than `max_price_amount`.
     max_price: Option<i32>,
     max_price_amount: u32,
+    /// `(slot, like)`: the seats of `slot` play under the rules that bind slot `like`.
+    mirror: Option<(i32, i32)>,
 }
 
 impl Rules {
     /// Whether any rule binds the seats of this slot.
     fn bind(&self, kind: i32) -> bool {
         self.no_bank_all
-            || [self.no_bank, self.buy_at_harbor, self.no_same_turn_repay, self.min_bid, self.max_price].contains(&Some(kind))
+            || [self.no_bank, self.buy_at_harbor, self.no_same_turn_repay, self.min_bid, self.max_price, self.no_double_reprice, self.bank_needs_load].contains(&Some(kind))
     }
 }
 
@@ -150,6 +174,9 @@ struct Env {
     traded: [i32; MAX_PLAYERS],
     /// Per seat, how it dealt with the others in the game so far (see `INTERACTION`).
     inter: Interaction,
+    /// What the seats have done in the game so far, for nets that read it.
+    memory: Memory,
+    last_reprice: LastReprice,
     /// Actions after which a running game is declared stalled.
     horizon: usize,
     players: usize,
@@ -169,6 +196,8 @@ impl Env {
             actions: 0,
             traded: [0; MAX_PLAYERS],
             inter: [[0; INTERACTION]; MAX_PLAYERS],
+            memory: Memory::default(),
+            last_reprice: None,
             horizon: STALL,
             players: 0,
             status: Status::Idle,
@@ -190,6 +219,9 @@ impl Env {
                 -2 => create("simple", seed ^ (seat as u64 + 1)),
                 -3 => create("merchant", seed ^ (seat as u64 + 1)),
                 -4 => Some(Box::new(Merchant::trader(seed ^ (seat as u64 + 1))) as Box<dyn Opponent + Send>),
+                -5 => create("discounter", seed ^ (seat as u64 + 1)),
+                -6 => create("bargain", seed ^ (seat as u64 + 1)),
+                -7 => create("solitaire", seed ^ (seat as u64 + 1)),
                 _ => None,
             })
             .collect();
@@ -197,6 +229,8 @@ impl Env {
         self.actions = 0;
         self.traded = [0; MAX_PLAYERS];
         self.inter = [[0; INTERACTION]; MAX_PLAYERS];
+        self.memory = Memory::default();
+        self.last_reprice = None;
         self.players = players;
         self.status = Status::Idle;
     }
@@ -219,12 +253,13 @@ impl Env {
             let seat = game.current_player();
             let mut legal = game.legal_actions();
             let kind = self.kinds[seat];
+            let kind = self.rules.mirror.filter(|&(slot, _)| slot == kind).map_or(kind, |(_, like)| like);
             if self.rules.bind(kind) {
                 let rules = self.rules;
                 let allowed: Vec<Action> = legal
                     .iter()
                     .copied()
-                    .filter(|&a| !forbidden(rules, game, kind, a))
+                    .filter(|&a| !forbidden(rules, game, self.last_reprice, kind, a))
                     .collect();
                 // Never leave a seat without a move.
                 if !allowed.is_empty() {
@@ -242,7 +277,7 @@ impl Env {
                 self.status = Status::Pending;
                 return;
             };
-            apply(game, &mut self.traded, &mut self.inter, action);
+            apply(game, &mut self.traded, &mut self.inter, &mut self.memory, &mut self.last_reprice, action);
             self.actions += 1;
         }
     }
@@ -254,7 +289,11 @@ impl Env {
         }
         let seat = game.current_player();
         let obs = game.observation(seat)?;
-        encode_state(&obs, state);
+        if state_dim() == STATE_DIM_MEM {
+            encode_state_mem(&obs, &self.memory, state);
+        } else {
+            encode_state(&obs, state);
+        }
         for (k, &i) in self.thinned.iter().enumerate() {
             encode_action(&obs, self.legal[i], &mut acts[k * ACTION_DIM..(k + 1) * ACTION_DIM]);
             mask[k] = 1;
@@ -267,7 +306,7 @@ impl Env {
             return;
         }
         let action = self.legal[self.thinned[choice.min(self.thinned.len() - 1)]];
-        apply(self.game.as_mut().expect("game"), &mut self.traded, &mut self.inter, action);
+        apply(self.game.as_mut().expect("game"), &mut self.traded, &mut self.inter, &mut self.memory, &mut self.last_reprice, action);
         self.actions += 1;
         self.status = Status::Idle;
     }
@@ -287,7 +326,7 @@ impl Env {
 }
 
 /// Whether the rules imposed on this slot rule `action` out.
-fn forbidden(rules: Rules, game: &Game, kind: i32, action: Action) -> bool {
+fn forbidden(rules: Rules, game: &Game, last_reprice: LastReprice, kind: i32, action: Action) -> bool {
     if (rules.no_bank_all || rules.no_bank == Some(kind)) && matches!(action, Action::StartAuction { .. } | Action::Outbid(_)) {
         return true;
     }
@@ -304,6 +343,19 @@ fn forbidden(rules: Rules, game: &Game, kind: i32, action: Action) -> bool {
     }
     if let (Some(slot), Phase::Arrange(a), Action::Place(lot)) = (rules.max_price, game.phase, action) {
         if slot == kind && a.district.lot_price(lot) > rules.max_price_amount {
+            return true;
+        }
+    }
+    if rules.no_double_reprice == Some(kind) {
+        if let (Phase::Main, Action::Reprice(d)) = (game.phase, action) {
+            if last_reprice == Some((game.state.active_player, d, game.turn.actions_left)) {
+                return true;
+            }
+        }
+    }
+    if rules.bank_needs_load == Some(kind) && game.phase == Phase::Main && action == Action::Sail(ShipLocation::Bank) {
+        let mut after = game.clone();
+        if after.apply(action).is_ok() && !matches!(after.phase, Phase::Load(_)) {
             return true;
         }
     }
@@ -404,6 +456,46 @@ pub unsafe extern "C" fn cenv_require_harbor_purchase(b: *mut Batch, slot: c_int
     }
 }
 
+/// Forbids the seats of slot `slot` to reprice the same district twice in a row within a turn; a negative
+/// `slot` lifts the rule.
+///
+/// # Safety
+/// `b` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cenv_forbid_double_reprice(b: *mut Batch, slot: c_int) {
+    let batch = unsafe { &mut *b };
+    let rule = (slot >= 0).then_some(slot);
+    for env in &mut batch.envs {
+        env.rules.no_double_reprice = rule;
+    }
+}
+
+/// Makes the seats of slot `slot` play under the rules that bind slot `like`, for a frozen copy of a net
+/// that was trained under them; a negative `slot` lifts it.
+///
+/// # Safety
+/// `b` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cenv_mirror_rules(b: *mut Batch, slot: c_int, like: c_int) {
+    let batch = unsafe { &mut *b };
+    for env in &mut batch.envs {
+        env.rules.mirror = (slot >= 0).then_some((slot, like));
+    }
+}
+
+/// Lets the seats of slot `slot` sail to the Bank only to load a container; a negative `slot` lifts the rule.
+///
+/// # Safety
+/// `b` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cenv_require_bank_load(b: *mut Batch, slot: c_int) {
+    let batch = unsafe { &mut *b };
+    let rule = (slot >= 0).then_some(slot);
+    for env in &mut batch.envs {
+        env.rules.bank_needs_load = rule;
+    }
+}
+
 /// Forbids the seats of slot `slot` to repay a loan in a turn in which they requested one, in every
 /// env; a negative `slot` lifts the rule.
 ///
@@ -445,14 +537,27 @@ pub unsafe extern "C" fn cenv_set_max_price(b: *mut Batch, slot: c_int, amount: 
     }
 }
 
-/// Writes `[STATE_DIM, ACTION_DIM, MAX_ACTIONS]` into `out`.
+static MEMORY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Length of the state rows: with the opponent memory ([`Memory`]) appended or not.
+fn state_dim() -> usize {
+    if MEMORY.load(std::sync::atomic::Ordering::Relaxed) { STATE_DIM_MEM } else { STATE_DIM }
+}
+
+/// Makes the states carry the opponent memory (`on` non-zero); call before `cenv_dims`.
+#[unsafe(no_mangle)]
+pub extern "C" fn cenv_set_memory(on: c_int) {
+    MEMORY.store(on != 0, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Writes `[state dim, ACTION_DIM, MAX_ACTIONS]` into `out`.
 ///
 /// # Safety
 /// `out` points to three `u32`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cenv_dims(out: *mut u32) {
     let out = unsafe { std::slice::from_raw_parts_mut(out, 3) };
-    out.copy_from_slice(&[STATE_DIM as u32, ACTION_DIM as u32, MAX_ACTIONS as u32]);
+    out.copy_from_slice(&[state_dim() as u32, ACTION_DIM as u32, MAX_ACTIONS as u32]);
 }
 
 /// Starts a new game in env `i`. `kinds` holds one seat kind per player.
@@ -533,7 +638,7 @@ pub unsafe extern "C" fn cenv_observe(
         let (state, acts, mask, slot, seat) = (state, acts, mask, slot, seat);
         let (s, a, m) = unsafe {
             (
-                std::slice::from_raw_parts_mut(state.0.add(i * STATE_DIM), STATE_DIM),
+                std::slice::from_raw_parts_mut(state.0.add(i * state_dim()), state_dim()),
                 std::slice::from_raw_parts_mut(
                     acts.0.add(i * MAX_ACTIONS * ACTION_DIM),
                     MAX_ACTIONS * ACTION_DIM,
@@ -980,6 +1085,78 @@ mod tests {
         let (visits, empty) = empty_harbor_visits(Some(0));
         assert!(visits > 0, "the rule must still allow sailing to harbors");
         assert_eq!(empty, 0);
+    }
+
+    /// Plays random games where every seat is a slot under the two new rules; counts the Bank trips that
+    /// load nothing and the back-to-back reprices of one district.
+    fn rule_breaches(on: bool, slot: i32) -> (usize, usize, usize, usize) {
+        let (mut bank, mut empty_bank, mut reprices, mut repeats) = (0, 0, 0, 0);
+        for seed in 0..40 {
+            let mut env = Env::new();
+            if on {
+                env.rules.bank_needs_load = Some(0);
+                env.rules.no_double_reprice = Some(0);
+                env.rules.mirror = (slot != 0).then_some((slot, 0));
+            }
+            env.reset(3, seed, &[slot; 3]);
+            let mut step = 0usize;
+            let mut prev: Option<(usize, District, u8)> = None;
+            loop {
+                env.advance();
+                if env.status != Status::Pending {
+                    break;
+                }
+                let game = env.game.as_ref().unwrap();
+                let main = game.phase == Phase::Main;
+                let (me, left) = (game.current_player(), game.turn.actions_left);
+                step += 1;
+                let pick = (step * 7 + seed as usize) % env.thinned.len();
+                let action = env.legal[env.thinned[pick]];
+                if main {
+                    if let Action::Reprice(d) = action {
+                        reprices += 1;
+                        repeats += usize::from(prev == Some((me, d, left)));
+                        prev = Some((me, d, left - 1));
+                    } else {
+                        prev = None;
+                    }
+                    if action == Action::Sail(ShipLocation::Bank) {
+                        bank += 1;
+                        let mut after = game.clone();
+                        after.apply(action).unwrap();
+                        empty_bank += usize::from(!matches!(after.phase, Phase::Load(_)));
+                    }
+                }
+                env.step(pick);
+            }
+        }
+        (bank, empty_bank, reprices, repeats)
+    }
+
+    #[test]
+    fn the_reprice_and_bank_rules_bind_a_slot() {
+        let (bank, empty_bank, reprices, repeats) = rule_breaches(false, 0);
+        assert!(bank > 0 && empty_bank > 0 && reprices > 0 && repeats > 0, "random play breaks both rules");
+        let (bank, empty_bank, reprices, repeats) = rule_breaches(true, 0);
+        assert!(bank > 0 && reprices > 0, "the rules still allow both actions");
+        assert_eq!((empty_bank, repeats), (0, 0));
+    }
+
+    #[test]
+    fn a_mirrored_slot_plays_under_the_rules_of_another() {
+        let (bank, _, reprices, _) = rule_breaches(false, 5);
+        assert!(bank > 0 && reprices > 0);
+        let (bank, empty_bank, reprices, repeats) = rule_breaches(true, 5);
+        assert!(bank > 0 && reprices > 0, "the rules still allow both actions");
+        assert_eq!((empty_bank, repeats), (0, 0));
+    }
+
+    #[test]
+    fn solitaire_seats_play_a_game_out() {
+        let mut env = Env::new();
+        env.reset(3, 9, &[-7, -7, -7]);
+        play_out(&mut env, 1);
+        assert_eq!(env.status, Status::Done);
     }
 
     #[test]

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-RANDOM, SIMPLE, MERCHANT, TRADER = -1, -2, -3, -4
+RANDOM, SIMPLE, MERCHANT, TRADER, DISCOUNTER, BARGAIN, SOLITAIRE = -1, -2, -3, -4, -5, -6, -7
 MAX_PLAYERS = 5
 INTERACTION = 16  # columns of `BatchEnv.interaction`, see `crates/container-env`
 (BOUGHT, SPENT, SOLD, EARNED, BIDS, BID_MONEY, REAL_BIDS, PLACED_AT) = range(8)  # PLACED_AT..PLACED_AT+5: laid out in a $1..$6 lot
@@ -71,12 +71,17 @@ class BatchEnv:
         lib.cenv_ban_bank.argtypes = [C.c_void_p, C.c_int]
         lib.cenv_ban_bank_all.argtypes = [C.c_void_p, C.c_int]
         lib.cenv_require_harbor_purchase.argtypes = [C.c_void_p, C.c_int]
+        lib.cenv_forbid_double_reprice.argtypes = [C.c_void_p, C.c_int]
+        lib.cenv_require_bank_load.argtypes = [C.c_void_p, C.c_int]
+        lib.cenv_mirror_rules.argtypes = [C.c_void_p, C.c_int, C.c_int]
         lib.cenv_forbid_same_turn_repay.argtypes = [C.c_void_p, C.c_int]
         lib.cenv_step.argtypes = [C.c_void_p, C.POINTER(C.c_int)]
         lib.cenv_teacher.argtypes = [C.c_void_p, C.POINTER(C.c_int)]
         lib.cenv_results.argtypes = [C.c_void_p] + [C.POINTER(C.c_int)] * 3
         self.lib = lib
         self.n = n
+        lib.cenv_set_memory.argtypes = [C.c_int]
+        lib.cenv_set_memory(int(os.environ.get("CAI_MEMORY", "0")))
         dims = np.zeros(3, dtype=np.uint32)
         lib.cenv_dims(_ptr(dims, C.c_uint32))
         self.state_dim, self.action_dim, self.max_actions = (int(x) for x in dims)
@@ -121,6 +126,18 @@ class BatchEnv:
     def require_harbor_purchase(self, slot: int) -> None:
         """Seats of this slot must buy something whenever they sail to a harbor."""
         self.lib.cenv_require_harbor_purchase(self.handle, slot)
+
+    def forbid_double_reprice(self, slot: int) -> None:
+        """Seats of this slot may not reprice the same district twice in a row within a turn."""
+        self.lib.cenv_forbid_double_reprice(self.handle, slot)
+
+    def require_bank_load(self, slot: int) -> None:
+        """Seats of this slot may only sail to the Bank when they have a container there to load."""
+        self.lib.cenv_require_bank_load(self.handle, slot)
+
+    def mirror_rules(self, slot: int, like: int) -> None:
+        """Seats of `slot` play under the rules that bind `like` (a frozen copy of a net trained under them)."""
+        self.lib.cenv_mirror_rules(self.handle, slot, like)
 
     def require_min_bid(self, slot: int, amount: int) -> None:
         """Seats of this slot open a delivery auction with at least `amount` (their whole cash if less)."""

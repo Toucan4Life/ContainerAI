@@ -11,10 +11,14 @@ pub mod classic;
 pub mod consortium;
 pub mod dealer;
 pub mod features;
+pub mod haggler;
 pub mod heuristic;
 pub mod magnate;
+pub mod memory;
 pub mod merchant;
 pub mod neural;
+pub mod peddler;
+pub mod peddler2;
 pub mod random;
 pub mod solitaire;
 
@@ -28,6 +32,11 @@ pub trait Opponent {
     /// Picks one of `legal`, the actions the game accepts from `obs.viewer` now. `legal` is never
     /// empty while the game is going.
     fn choose(&mut self, obs: &Observation, legal: &[Action]) -> Action;
+
+    /// Tells the opponent about an action any seat has just chosen, `obs` being that seat's view
+    /// before it. Called for every action of the game, the opponent's own included. Opponents
+    /// without memory ignore it.
+    fn observe(&mut self, _mover: usize, _obs: &Observation, _action: Action) {}
 }
 
 /// Whether `action` repays a loan on a turn in which its player has already requested one. The two
@@ -50,7 +59,7 @@ pub struct OpponentInfo {
 }
 
 /// Every opponent that can be selected.
-pub const OPPONENTS: [OpponentInfo; 9] = [
+pub const OPPONENTS: [OpponentInfo; 12] = [
     OpponentInfo {
         id: random::ID,
         name: "Random",
@@ -76,6 +85,18 @@ pub const OPPONENTS: [OpponentInfo; 9] = [
         elo: 1200,
     },
     OpponentInfo {
+        id: peddler::ID,
+        name: "Peddler",
+        description: "Haggler's recipe (trained from scratch, 80% dealing with opponents and 20% winning), trained under three table rules that it keeps: it sails to an opponent's harbor only to buy there, and then buys; it sails to the Bank only with a container to pick up; and it never reprices the same district twice in a row in a turn. It lists about two containers in three at $3 or less, buys from opponents about as often as Magnate and Consortium, and delivers more often than the other nets (11 a game against 8). It beats Merchant every time and Solitaire at three and four players, but is barely ahead of four Solitaires at five, and with two Solitaires at three players it sometimes cannot end the game (4% of such tables). It loses to Magnate, Dealer and Consortium. Also keeps Dealer's two rules. The rules bind this bot only, not its opponents, so its rating, from its training evaluation, is only roughly comparable.",
+        elo: 1900,
+    },
+    OpponentInfo {
+        id: haggler::ID,
+        name: "Haggler",
+        description: "A net trained from scratch to trade rather than to beat the strong nets: its reward was 80% dealing with opponents (buying from them, bidding on their deliveries, selling to them, pricing at $3 or less) and 20% winning, with no score margin. It lists about three containers in four at $3 or less. It beats Merchant and the solitaire variants easily and loses to Magnate, Dealer and Consortium. Same two rules as Dealer.",
+        elo: 2000,
+    },
+    OpponentInfo {
         id: broker::ID,
         name: "Broker",
         description: "A net trained from scratch to win and to deal with its opponents. It bids at least $3 on every delivery, buys from opponents, never repays a loan the turn it takes it, and plays the action it rates best without repeating itself in an identical position. Weaker than Magnate.",
@@ -86,6 +107,12 @@ pub const OPPONENTS: [OpponentInfo; 9] = [
         name: "Dealer",
         description: "Broker trained further to deal, not only to win. It buys from opponents' factories and harbors, bids on their deals, and lists about four containers in ten at $3 or less, a price at which a buyer cannot lose, where Broker lists one in twenty. Same rules and about the same strength as Broker.",
         elo: 2170,
+    },
+    OpponentInfo {
+        id: peddler2::ID,
+        name: "Peddler v2",
+        description: "Peddler trained 20 more minutes in a league that seats Solitaire, Merchant and a frozen copy of Peddler, with the same reward (80% dealing with opponents, 20% winning) and the same three table rules, which it keeps: it sails to an opponent's harbor only to buy there, and then buys; it sails to the Bank only with a container to pick up; and it never reprices the same district twice in a row in a turn. It lists four containers in five at $3 or less, buys from opponents 15 times a game (Magnate and Consortium 16), sells to them 17 times (they sell 13 to 14) and delivers 11 times a game (they deliver 7 to 8). It beats Merchant in 99.8% of the games and Solitaire in at least 96% at every table size. Against the strong nets an even share is 26%: it wins 52% of the games against Magnate, 37% against Consortium and 27% against Dealer (Peddler wins 6% against the three together). With two Solitaires at three players it sometimes cannot end the game (2% of such tables). Also keeps Dealer's two rules. The rules bind this bot only, not its opponents, so its rating, from its training evaluation, is only roughly comparable.",
+        elo: 2225,
     },
     OpponentInfo {
         id: classic::ID,
@@ -107,8 +134,19 @@ pub const OPPONENTS: [OpponentInfo; 9] = [
     },
 ];
 
+/// Scripted economic archetypes for evaluation. They are not offered in the UI: they exist to test
+/// whether a net notices and uses the offers other kinds of players make.
+pub const ARCHETYPES: [&str; 3] = ["discounter", "bargain", "trader"];
+
 /// Builds the opponent with this identifier. A seed gives the same choices every time.
 pub fn create(id: &str, seed: u64) -> Option<Box<dyn Opponent + Send>> {
+    if let Some(path) = id.strip_prefix("net:") {
+        return candidate(path, seed, false);
+    }
+    // A net trained under the three table rules (see `Neural::with_table_rules`).
+    if let Some(path) = id.strip_prefix("netr:") {
+        return candidate(path, seed, true);
+    }
     match id {
         random::ID => Some(Box::new(Random::new(seed))),
         heuristic::ID => Some(Box::new(Heuristic::new(seed))),
@@ -118,9 +156,35 @@ pub fn create(id: &str, seed: u64) -> Option<Box<dyn Opponent + Send>> {
         consortium::ID => Some(Box::new(consortium::new(seed))),
         broker::ID => Some(Box::new(broker::new(seed))),
         dealer::ID => Some(Box::new(dealer::new(seed))),
+        haggler::ID => Some(Box::new(haggler::new(seed))),
+        peddler::ID => Some(Box::new(peddler::new(seed))),
+        peddler2::ID => Some(Box::new(peddler2::new(seed))),
         classic::ID => Some(Box::new(classic::new(seed))),
+        // Prices everything at $1 (factory) and buys at any price.
+        "discounter" => Some(Box::new(Merchant::seller(seed, 4, 0))),
+        // Prices around $2 and will not pay more than $3.
+        "bargain" => Some(Box::new(Merchant::seller(seed, 3, 1))),
+        "trader" => Some(Box::new(Merchant::trader(seed))),
         _ => None,
     }
+}
+
+/// An unreleased candidate net (`net:PATH.bin`), played under Dealer's rules: at least $3 to open a
+/// delivery auction and no repayment in the turn a loan was taken. `netr:PATH.bin` adds the three table
+/// rules (see `Neural::with_table_rules`). For evaluation only; the file is read once per process and
+/// shared by every seat.
+fn candidate(path: &str, seed: u64, table_rules: bool) -> Option<Box<dyn Opponent + Send>> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+    static NETS: OnceLock<Mutex<HashMap<String, Arc<Net>>>> = OnceLock::new();
+    let mut nets = NETS.get_or_init(Default::default).lock().ok()?;
+    if !nets.contains_key(path) {
+        let net = Net::from_bytes(&std::fs::read(path).ok()?).ok()?;
+        nets.insert(path.to_string(), Arc::new(net));
+    }
+    let net = nets[path].clone();
+    let bot = Neural::new(net, seed, 0.0).without_same_turn_repay().with_min_bid(3);
+    Some(Box::new(if table_rules { bot.with_table_rules() } else { bot }))
 }
 
 #[cfg(test)]

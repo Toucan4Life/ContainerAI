@@ -136,6 +136,77 @@ fn dealer_never_opens_a_delivery_auction_under_its_minimum_bid() {
     assert!(opening_bids > 0);
 }
 
+/// Plays `id` in every seat of `config` and checks each move against the three table rules. Returns the
+/// number of trips it made to a harbor and to the Bank.
+fn table_rule_trips(id: &str, config: GameConfig) -> (u32, u32) {
+    use container_engine::observation::PhaseView;
+    use container_engine::phase::Phase;
+    use container_engine::state::ShipLocation;
+    let (mut harbor_trips, mut bank_trips) = (0, 0);
+    let mut game = Game::new(config).unwrap();
+    let mut seats: Vec<_> = (0..config.num_players).map(|s| create(id, s as u64).unwrap()).collect();
+    let mut last: Option<(usize, container_engine::action::District)> = None;
+    let mut steps = 0;
+    while !game.is_terminal() && steps < LIMIT {
+        steps += 1;
+        let viewer = game.current_player();
+        let obs = game.observation(viewer).unwrap();
+        let action = seats[viewer].choose(&obs, &game.legal_actions());
+        if obs.phase == PhaseView::Open(Phase::Main) {
+            if let Action::Reprice(d) = action {
+                assert_ne!(last, Some((viewer, d)), "{id}: reprice twice in a row");
+                last = Some((viewer, d));
+            } else {
+                last = None;
+            }
+        }
+        let mut after = game.clone();
+        after.apply(action).unwrap();
+        match action {
+            Action::Sail(ShipLocation::Bank) => {
+                bank_trips += 1;
+                assert!(matches!(after.phase, Phase::Load(_)), "{id}: sailed to the Bank with nothing to load");
+            }
+            Action::Sail(ShipLocation::Harbor(_)) => {
+                harbor_trips += 1;
+                assert!(matches!(after.phase, Phase::Buy(_)), "{id}: sailed to a player and could not buy");
+            }
+            Action::DoneBuying => {
+                if let Phase::Buy(b) = game.phase {
+                    assert!(!(b.optional && b.bought.is_empty() && b.district == container_engine::action::District::Harbor));
+                }
+            }
+            _ => {}
+        }
+        game = after;
+    }
+    (harbor_trips, bank_trips)
+}
+
+#[test]
+fn a_net_under_the_table_rules_keeps_them() {
+    let (mut harbor_trips, mut bank_trips) = (0, 0);
+    for seed in 0..4 {
+        let (harbor, bank) = table_rule_trips("netr:weights/dealer.bin", config(3, GameLength::Standard, seed));
+        harbor_trips += harbor;
+        bank_trips += bank;
+    }
+    assert!(harbor_trips > 0 && bank_trips > 0, "the net should still sail: {harbor_trips} {bank_trips}");
+}
+
+#[test]
+fn the_peddlers_keep_the_table_rules_at_every_table() {
+    for id in ["peddler", "peddler2"] {
+        let (mut harbor_trips, mut bank_trips) = (0, 0);
+        for config in every_table() {
+            let (harbor, bank) = table_rule_trips(id, config);
+            harbor_trips += harbor;
+            bank_trips += bank;
+        }
+        assert!(harbor_trips > 0 && bank_trips > 0, "{id} should still sail: {harbor_trips} {bank_trips}");
+    }
+}
+
 #[test]
 fn solitaire_calls_the_bank_for_a_container_lot_and_bids_cash() {
     let (mut starts, mut bids) = (0, 0);
@@ -313,4 +384,34 @@ fn features_fill_their_vectors_in_every_phase() {
         }
     }
     assert!(seen.len() >= 18, "only {} action kinds met", seen.len());
+}
+
+#[test]
+fn the_cheap_seller_archetypes_play_to_the_end_and_price_low() {
+    use container_engine::action::District;
+    use crate::ARCHETYPES;
+    for id in ARCHETYPES {
+        for config in every_table() {
+            let Played { game, trace } = play(config, &[id, "merchant"]);
+            assert!(game.is_terminal(), "{id}: {config:?} stalled after {} actions", trace.len());
+        }
+    }
+    // A discounter's containers sit in the cheapest lot of its factory district.
+    let mut game = Game::new(config(3, GameLength::Short, 2)).expect("game");
+    let mut seats: Vec<_> = (0..3).map(|s| create("discounter", s as u64).expect("bot")).collect();
+    let (mut priced, mut cheapest) = (0u32, 0u32);
+    while !game.is_terminal() && priced < 200 {
+        let viewer = game.current_player();
+        let obs = game.observation(viewer).expect("seat");
+        let action = seats[viewer].choose(&obs, &game.legal_actions());
+        if let Action::Place(lot) = action {
+            if matches!(obs.phase, container_engine::observation::PhaseView::Open(
+                container_engine::phase::Phase::Arrange(a)) if a.district == District::Factory) {
+                priced += 1;
+                cheapest += u32::from(lot == 0);
+            }
+        }
+        game.apply(action).expect("legal");
+    }
+    assert!(priced > 0 && cheapest * 10 >= priced * 9, "{cheapest} of {priced} at $1");
 }

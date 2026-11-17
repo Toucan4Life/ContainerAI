@@ -2,6 +2,7 @@ import { useState } from "react";
 import GameScreen from "./Game";
 import GameOver from "./GameOver";
 import Help from "./Help";
+import RuleTip from "./RuleTip";
 import Setup from "./Setup";
 import { useGame } from "./useGame";
 
@@ -11,6 +12,7 @@ export default function App() {
 
   return (
     <>
+      <RuleTip />
       {snap ? (
         <GameScreen
           snap={snap}

@@ -31,6 +31,7 @@ import {
   total,
 } from "./engine";
 import { Chips, Swatch, money, seatColor } from "./ui";
+import { RuleKey } from "./rules";
 
 type Act = (id: number) => void;
 type Props = { snap: Snapshot; act: Act };
@@ -49,6 +50,7 @@ function ActButton({
   disabled,
   title,
   compact,
+  rule,
 }: {
   label: ReactNode;
   sub?: ReactNode;
@@ -58,13 +60,17 @@ function ActButton({
   disabled?: boolean;
   title?: string;
   compact?: boolean;
+  rule?: RuleKey;
 }) {
+  const note = title ?? (compact && typeof sub === "string" ? sub : undefined);
   return (
     <button
       className={`action-button ${primary ? "action-primary" : ""} ${compact ? "action-compact" : ""}`}
       onClick={onClick}
       disabled={disabled}
-      title={title ?? (compact && typeof sub === "string" ? sub : undefined)}
+      title={rule ? undefined : note}
+      data-rule={rule}
+      data-rule-note={rule ? note : undefined}
     >
       {icon}
       <span>
@@ -114,18 +120,20 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
 function Shell({
   snap,
   title,
+  rule,
   hint,
   children,
 }: {
   snap: Snapshot;
   title: string;
+  rule?: RuleKey;
   hint?: ReactNode;
   children?: ReactNode;
 }) {
   const cash = snap.players[snap.viewer].cash;
   return (
     <section className="action-panel">
-      <div className="panel-heading">
+      <div className="panel-heading" data-rule={rule}>
         <span>{title}</span>
         <small>{cash !== null && `YOUR CASH ${money(cash)}`}</small>
       </div>
@@ -145,6 +153,7 @@ function LoanButtons({ snap, act }: Props) {
         <ActButton
           compact
           icon={<Landmark size={15} />}
+          rule="loans"
           label="Take $10 loan"
           sub="Each loan costs $11 at the end"
           onClick={() => act(request.id)}
@@ -154,6 +163,7 @@ function LoanButtons({ snap, act }: Props) {
         <ActButton
           compact
           icon={<Landmark size={15} />}
+          rule="loans"
           label="Repay a loan"
           sub="Pay $10 back to the supply"
           onClick={() => act(repay.id)}
@@ -311,6 +321,7 @@ function MainPanel({ snap, act }: Props) {
   const bankAction = (a: Of<"StartAuction">) => (
     <ActButton
       compact
+      rule={a.kind === "container" ? "containerLot" : "cashLot"}
       key={a.id}
       icon={<Gavel size={15} />}
       label={a.kind === "container" ? (
@@ -332,6 +343,7 @@ function MainPanel({ snap, act }: Props) {
           {harborInBuy && (
             <ActButton
               compact
+              rule="buy"
               icon={<Anchor size={15} />}
               label={me.ship.at === "harbor" ? `${name(me.ship.owner)}'s harbor` : "Harbor"}
               sub={me.ship.at === "harbor" ? `Buy at ${name(me.ship.owner)}'s harbor onto your ship` : "Buy containers onto your ship"}
@@ -341,6 +353,7 @@ function MainPanel({ snap, act }: Props) {
           {purchases.map((a) => (
             <ActButton
               compact
+              rule="buy"
               key={a.id}
               icon={<Coins size={15} />}
               label={a.seller === snap.viewer ? "Mine" : name(a.seller)}
@@ -363,7 +376,7 @@ function MainPanel({ snap, act }: Props) {
             const { label, sub } = sailLabel(a.to);
             const short = a.to.at === "harbor" ? `${name(a.to.owner)}'s harbor` : a.to.at === "island" ? "Island" : a.to.at === "bank" ? "Bank" : "Open sea";
             return (
-              <ActButton compact key={a.id} icon={<Ship size={15} />} label={short} sub={`${label}: ${sub}`} primary={a.to.at === "island"} onClick={pick(a.id)} />
+              <ActButton compact rule="sail" key={a.id} icon={<Ship size={15} />} label={short} sub={`${label}: ${sub}`} primary={a.to.at === "island"} onClick={pick(a.id)} />
             );
           })}
         </div>
@@ -383,6 +396,7 @@ function MainPanel({ snap, act }: Props) {
               factories.map((a) => (
                 <ActButton
                   compact
+                  rule="factories"
                   key={a.id}
                   icon={<Swatch color={a.color} size={14} />}
                   label={COLOR_LABELS[a.color]}
@@ -396,6 +410,7 @@ function MainPanel({ snap, act }: Props) {
               "Warehouse",
               <ActButton
                 compact
+                rule="warehouses"
                 icon={<Warehouse size={15} />}
                 label={money(warehouseCost(me.warehouses))}
                 sub={`Warehouse. Costs ${money(warehouseCost(me.warehouses))}, adds harbor storage`}
@@ -421,6 +436,7 @@ function MainPanel({ snap, act }: Props) {
                 return (
                   <ActButton
                     compact
+                    rule={a.kind === "container" ? "containerLot" : "cashLot"}
                     key={a.id}
                     icon={<Gavel size={15} />}
                     label={a.kind === "container" ? "Container lot" : "Cash lot"}
@@ -448,6 +464,7 @@ function MainPanel({ snap, act }: Props) {
           {reprices.map((a) => (
             <ActButton
               compact
+              rule="reprice"
               key={a.id}
               icon={<Shuffle size={15} />}
               label={a.district === "factory" ? "Factory" : "Harbor"}
@@ -465,6 +482,7 @@ function MainPanel({ snap, act }: Props) {
     <Shell
       snap={snap}
       title="YOUR TURN"
+      rule="turn"
       hint={
         <>
           <span className="pips">
@@ -479,19 +497,20 @@ function MainPanel({ snap, act }: Props) {
       <div className="action-groups">
         <div className="menu-tabs">
           {produce ? (
-            <ActButton compact primary icon={<Package size={15} />} label="Produce" sub="Pay $1 wages, take containers from your factories" onClick={() => choose(() => act(produce.id))} />
+            <ActButton compact primary rule="produce" icon={<Package size={15} />} label="Produce" sub="Pay $1 wages, take containers from your factories" onClick={() => choose(() => act(produce.id))} />
           ) : (
-            <ActButton compact disabled icon={<Package size={15} />} label="Produce" sub={snap.turn.produced ? "Already produced this turn" : "No room or nothing to produce"} />
+            <ActButton compact disabled rule="produce" icon={<Package size={15} />} label="Produce" sub={snap.turn.produced ? "Already produced this turn" : "No room or nothing to produce"} />
           )}
           {harbor && !harborInBuy && (
-            <ActButton compact icon={<Anchor size={15} />} label={harborLabel.label} sub={harborLabel.sub} onClick={() => choose(() => act(harbor.id))} />
+            <ActButton compact rule="buy" icon={<Anchor size={15} />} label={harborLabel.label} sub={harborLabel.sub} onClick={() => choose(() => act(harbor.id))} />
           )}
           {tabs.map((t) => (
             <button
               key={t.key}
               className={`action-button action-compact menu-tab ${open === t.key ? "menu-tab-open" : ""}`}
               disabled={t.count === 0}
-              title={t.count === 0 ? t.blocked : undefined}
+              data-rule={t.key}
+              data-rule-note={t.count === 0 ? t.blocked : undefined}
               onClick={() => setOpen(open === t.key ? null : t.key)}
             >
               {t.icon}
@@ -523,6 +542,7 @@ function ProducePanel({ snap, act, phase }: Props & { phase: Extract<Phase, { ty
     <Shell
       snap={snap}
       title="PRODUCE"
+      rule="produce"
       hint={`Your factories can make more than fits. Choose ${phase.toPick} more container${phase.toPick === 1 ? "" : "s"}.`}
     >
       {picked.length > 0 && (
@@ -563,6 +583,7 @@ function BuyPanel({ snap, act, phase }: Props & { phase: Extract<Phase, { type: 
     <Shell
       snap={snap}
       title="BUYING"
+      rule="buy"
       hint={`Click containers in ${seller}'s ${phase.district} district to buy them. The price is shown on each lot.${phase.optional ? " You may buy nothing." : ""}`}
     >
       <div className="panel-row">
@@ -582,7 +603,7 @@ function LoadPanel({ snap, act }: Props) {
   const done = of(snap, "DoneLoading")[0];
   const holding = snap.players[snap.viewer].holding;
   return (
-    <Shell snap={snap} title="LOADING" hint="Move containers from your holding area onto the ship. Loading is free.">
+    <Shell snap={snap} title="LOADING" rule="holding" hint="Move containers from your holding area onto the ship. Loading is free.">
       <div className="action-buttons">
         {of(snap, "Load").map((a) => (
           <ActButton
@@ -606,6 +627,7 @@ function ArrangePanel({ snap, act, phase, stepBack }: Props & { stepBack: () => 
     <Shell
       snap={snap}
       title="LAY OUT CONTAINERS"
+      rule="reprice"
       hint={
         next >= 0
           ? `Place the next container (${COLOR_LABELS[next].toLowerCase()}) in a ${phase.district} lot. Cheaper lots sell first.`
@@ -693,6 +715,7 @@ function BidPanel({ snap, act, phase }: Props & { phase: Extract<Phase, { type: 
     <Shell
       snap={snap}
       title={phase.runoff ? "RUNOFF BID" : "DELIVERY AUCTION"}
+      rule="delivery"
       hint={
         <>
           {deliverer.name} delivered {total(cargo)} container{total(cargo) === 1 ? "" : "s"}. Bids are blind and final;
@@ -731,6 +754,7 @@ function DecidePanel({ snap, act, phase }: Props & { phase: Extract<Phase, { typ
     <Shell
       snap={snap}
       title="SETTLE THE AUCTION"
+      rule="delivery"
       hint={`The bids are revealed. The highest is ${money(phase.top)}${tiedCount > 1 ? `, tied between ${tiedCount} players: you choose the winner` : ""}. Sell the cargo and you collect ${money(phase.top)} from the buyer plus ${money(phase.top)} from the Bank (${money(2 * phase.top)} in all), or pay the bid to the Bank and keep it.`}
     >
       <div className="action-buttons">
@@ -775,6 +799,7 @@ function SeizePanel({ snap, phase }: { snap: Snapshot; phase: Extract<Phase, { t
     <Shell
       snap={snap}
       title="DEFAULT"
+      rule="seize"
       hint={`${debtor} could not pay interest, so the Bank seizes ${phase.remaining} more container${phase.remaining === 1 ? "" : "s"} from their ${PLACE_NAMES[phase.place]}. As the player on their right, you choose: click containers on their board.`}
     >
       <div className="panel-row">
@@ -792,6 +817,7 @@ function DistributePanel({ snap, act, phase }: Props & { phase: Extract<Phase, {
     <Shell
       snap={snap}
       title="DEAL AT THE BANK"
+      rule="bankZone"
       hint={`Put one container in each Bank container lot, starting with lot ${LOT_NUMERALS[phase.dealt] ?? "I"}. You choose the color.`}
     >
       <div className="action-buttons">
@@ -822,6 +848,7 @@ function BankBidPanel({ snap, act, phase }: Props & { phase: Extract<Phase, { ty
       <Shell
         snap={snap}
         title={`BID FOR CONTAINER LOT ${LOT_NUMERALS[phase.lot]}`}
+        rule="containerLot"
         hint={`Put cash on the tile. The lowest bid is ${money(phase.min)}. You get the containers if nobody outbids you.`}
       >
         <div className="panel-row">
@@ -842,6 +869,7 @@ function BankBidPanel({ snap, act, phase }: Props & { phase: Extract<Phase, { ty
     <Shell
       snap={snap}
       title={`BID FOR CASH LOT ${LOT_NUMERALS[phase.lot]}`}
+      rule="cashLot"
       hint={`Click your own containers (factory or harbor district) to put them on the tile. You need at least ${phase.min}.`}
     >
       <div className="panel-row">
