@@ -12,6 +12,7 @@ always reported together. No ELO figure is used as evidence here.
 | `netr:PATH.bin` bot id | The same, and also under the three table rules (`Neural::with_table_rules`): for a net trained with `--buy-at-harbor --bank-needs-load --no-double-reprice`. |
 | Archetypes `discounter`, `bargain`, `trader` (`container_bots::ARCHETYPES`, not in the UI) | Scripted economic opponents. `discounter` lays everything at $1 (factory) and buys at any price; `bargain` prices around $2 and pays at most $3; `trader` is the existing Merchant trader. |
 | Env seat kinds `-5` discounter, `-6` bargain; `train --seller-share P` | Cheap sellers as scripted league opponents in training. |
+| `train --league-nets`, `--peddler`, `--peddler-share`; `training/league/peddler2.pt` | Which anchors and which frozen net the learner trains against. Defaults since Round 5: Consortium and Peddler v2 (15% of the opponent seats); the ladder keeps all five anchors. See [The league after Round 5](#the-league-after-round-5). |
 | `reports/interaction/baseline.sh`, `summarize.py` | Reproduce and print the baselines. |
 
 Metrics (per seat-game, from the actions a bot played and what its seat could see; nothing hidden is used):
@@ -378,9 +379,11 @@ Win share of the focus seat against one kind of strong net (`interact`, 500 game
 
 So Peddler v2 is not simply stronger than the strong nets: it beats Magnate and Consortium, and is level with Dealer (.27
 is within the interval of an even .26). One reading, not tested: Magnate and Consortium are one lineage (`run1`, `run2`,
-Magnate, then psro02 to psro08; `populations/psro/manifest.json`), and the league's anchors held `run1`, `run2`,
-`exploit_run2` (a child of `run2`) and Consortium itself, whereas Dealer, from the from-scratch Broker, is not in that
-lineage and was not seated. Part of the edge over Magnate and Consortium may be specialization to that family. A second run
+Magnate, then psro02 to psro08; `populations/psro/manifest.json`; their weights are 0.996 alike by cosine), and the
+league's anchors held `run1`, `run2`, `exploit_run2` (a child of `run2`), Consortium itself and `traders` (a from-scratch
+net trained against price-sensitive traders, rated 1907, outside that family), whereas Dealer, from the from-scratch
+Broker, is not in that lineage and was not seated (nor were Magnate itself, Broker, Haggler or Classic). Part of the edge
+over Magnate and Consortium may be specialization to that family. A second run
 with Dealer seated, compared with this one, would test it. The label is the trainer's figure for the same reason: read as
 ratings, these results would put the net above Magnate (2280) and Consortium (2378) but only level with Dealer (2170),
 which no single number expresses, and it was not rated on the ladder's scale (a Bradley-Terry fit against Magnate, as for
@@ -393,6 +396,115 @@ Limits:
 - **One seed, no control.** A run of v1 trained 20 more minutes in the old league does not exist, so the league is not
   shown to be the cause of the gain; the 30-minute from-scratch run in the same league was worse than v1.
 - **No human play yet.** All of the above is bots against bots. Nothing here shows how it plays against a person.
+
+### Later measurements on Peddler v2: building, ship loads, where the score comes from
+
+All with seed 1; `actions` and `interact` are in `crates/container-arena`.
+
+- **Building is rare.** `actions` (5 seats, 500 games, all five nets at one table) counts 0.82 factories per game for Peddler
+  v2 and none for Peddler, Dealer, Magnate or Consortium; nobody builds a warehouse. Against Solitaire, Peddler v2 builds
+  1.39, 0.96 and 0.86 factories per game at 3, 4 and 5 seats (0.19 warehouses at 3 seats). `actions` now reports
+  `BuildFactory` and `BuildWarehouse` separately. There is no harbor-building action; `bought_factory` and `bought_harbor`
+  in the interact JSON count containers bought, not buildings.
+- **One container per harbor visit.** Over 300 games at a 5-seat table, every trained net (Peddler v2, Peddler, Dealer,
+  Magnate, Consortium) bought exactly one container in every harbor purchase (about 10,600 purchases), and Peddler v2 sailed
+  to the Island with a single container in 3151 of 3160 deliveries (Dealer: 1599 of 1983). The scripted Merchant does buy 2-4
+  at once, so the measurement can see it. A probe over about 3,700 harbor visits showed why: the opponent's harbor shelf held
+  exactly one container at essentially every visit (0% held two at 3 and 4 seats, 0.3% at 5 seats), so no second purchase was
+  legal. In the 3 cases where it was, Peddler v2 chose "done buying" (p about .96). So the nets have almost never been offered
+  a second container, in play or in training; whether they would decline it if offered often is not known. A test needs
+  positions with a stocked harbor. The high delivery count (11 a game) is therefore mostly one-container trips.
+- **Where the score comes from** (`cash`, `island`, `leftovers`, `loans` and `won_*` in the interact JSON; pool Magnate,
+  Dealer, Consortium and Peddler v2, 500 games). Peddler v2 wins on cash: 78 of its 111 points in won games, Island 28,
+  leftovers 4. Dealer wins as often with cash 56 and Island 48; Magnate and Consortium carry 11-14 points of leftovers.
+  Against Merchant and Solitaire, Peddler v2 uses the Island little (11 and 1 points) and wins on cash plus 19-27 of
+  leftovers. Peddler v1 carried about 7 points of loans a game. The committed `peddler2_*.json` files predate these fields.
+
+The hypothesis that the table rules (no double reprice, buy at harbor, bank needs a load) make the bot more interactive,
+because every action then changes the board, is plausible and untested. Haggler, trained without them, buys 13.2 and sells
+13.4 a game against Peddler's 14.2 and 12.4, so the rules are not obviously the cause, but those runs differ in seed and
+league. A controlled test is the same recipe with and without the rules, over the same seeds.
+
+## The league after Round 5
+
+Request: keep high-rated nets that do not trade out of the training league. `run1`, `run2`, `exploit_run2` and `traders`
+leave it, Consortium stays, and Peddler v2 joins.
+
+What changed (`training/train.py`; no weight and no rating moved):
+
+- `--league-nets NAMES` picks the rated anchors that are training opponents: `consortium` by default, `all` for the league
+  as it was, `none`, or a list such as `consortium,traders`. A name that is not an anchor stops the run and lists them.
+- `--peddler` now defaults to `training/league/peddler2.pt` and `--peddler-share` to 0.15, the share of the Round 5 recipe.
+  The file is `runs/exp/scratch_rules_sol_ft/final.pt`, and a test checks that it exports byte-identical to
+  `weights/peddler2.bin`. `.gitignore` lets `training/league/*.pt` through. The seat is skipped in `--exploit` runs, with
+  `--peddler-share 0` and with `--peddler ''`.
+- The ladder is untouched. `training/ladder.json` and `training/anchors/*.pt` still hold all five anchors, and the evaluations
+  (the trainer's, `anchors rate`, `duel`) still rate against all of them. No ELO in this repository changes meaning,
+  `--exploit run2` still works, and no checkpoint is lost (`traders.pt` exists only there and in git: its run directory is
+  gone). Taking the four nets off the ladder instead would have moved every rating and every label.
+- The trainer prints `league: anchor nets [...], peddler seat ...` at the start. It also warns when the learner lacks any of
+  Peddler v2's five rules, because the seat plays under the learner's rules and no others (`BatchEnv.mirror_rules`).
+
+Share of an opponent seat by default (the arithmetic of `league_table` with five snapshots in the league; the Round 5
+recipe puts Solitaire, extra Merchants and cheap sellers in front of the old draws):
+
+| Seat | Before | Now |
+|---|---|---|
+| Peddler v2 | none | 15.0% |
+| Consortium | 4.5% | 6.4% |
+| `run1`, `run2`, `exploit_run2`, `traders` | 4.5% each | none |
+| the learner's five snapshots | 22.5% | 31.9% |
+| Merchant, Simple, Random | 55.0% | 46.8% |
+
+Before a first snapshot exists (the first evaluation) the whole 38% that is not scripted or Peddler is Consortium.
+
+**Who trades.** `python -m training.audit_interaction --games 300 magnate=populations/baselines/defense_run2_vs_exploiter_30m.pt
+run1=training/anchors/run1.pt run2=training/anchors/run2.pt exploit_run2=training/anchors/exploit_run2.pt
+consortium=training/anchors/consortium.pt traders=training/anchors/traders.pt` (three copies of the net and a Merchant at
+each four-seat table, unrestricted rules, deterministic seeds; it gave the same table on a second run). Per game, summed
+over the net's three seats:
+
+| Net | Containers bought | Bids on players | Accepted | Mean bid | Laid out in lots 0-2 | Cash / island / leftovers |
+|---|---|---|---|---|---|---|
+| Magnate | 15.7 | 66.6 | 20.1 | $1.83 | 8% | 57.8 / 25.7 / 20.9 |
+| `run1` | 16.9 | 72.6 | 21.5 | $1.87 | 9% | 59.1 / 27.1 / 18.8 |
+| `run2` | 15.8 | 70.1 | 20.4 | $1.89 | 11% | 58.5 / 25.8 / 19.6 |
+| `exploit_run2` | 16.9 | 69.4 | 21.6 | $1.42 | 15% | 54.4 / 23.3 / 19.3 |
+| Consortium | 17.6 | 76.7 | 22.2 | $1.93 | 1% | 60.7 / 28.2 / 18.6 |
+| `traders` | 21.5 | 90.0 | 30.0 | $3.88 | 25% (33% in lot 4) | 91.0 / 43.4 / 5.2 |
+
+(Lots 0 to 2 are the cheap ones the trainer counts as fair: a lot costs its index plus 1 in a factory, plus 2 in a harbor.)
+The audit does not show that the first five do not interact: they buy and bid about as much as Magnate, and the arena puts
+Magnate and Consortium at 16.5 and 16.3 containers bought a game against Peddler v2's 15.0. What sets them apart is price:
+they lay out 1 to 15% of their containers in the cheap lots (the arena counts Magnate at 3 to 9% listed at $3 or less),
+where Peddler v2 lists about 80% at $3 or less (`interact`, nets pool). `traders` is the exception on buying: the highest of
+the six in every buying column, though it also lays out a third of its containers in lot 4. It leaves the league because
+the request names it, and `--league-nets consortium,traders` puts it back. Apart from this audit `run1`, `run2` and
+`exploit_run2` have no interaction measurement.
+
+What this does not show:
+
+- **Nothing was trained in the new league.** Whether it makes a better opponent, or a weaker one, is not measured. The
+  smoke runs (2 minutes from Peddler v2's weights, one seed) only checked the plumbing: the `league:` line, the new
+  settings in `config.json`, the rule warning, the typo and bad-path errors, the `--exploit` path and `--league-nets none`.
+- **Fewer strong opponents.** The strong nets are now two lineages (Consortium: `run1`, `run2`, Magnate, `psro`; and
+  Peddler v2) instead of five nets of which four were Magnate's family, which makes it easier to specialise to them. The
+  evaluation still rates against all five anchors, so a loss shows in the ELO, and `interact` pools would show the rest.
+- **Round 5's specialization question is only half addressed.** Peddler v2 is outside Magnate's lineage and is now seated;
+  Dealer, Broker, Haggler, Classic and Magnate itself still are not.
+- **A run is not comparable to Round 5 without a control.** The same recipe, seed and budget with `--league-nets all
+  --peddler-share 0` is the old league; the difference between the two runs is the league.
+
+### Training in the new league
+
+```sh
+.venv/bin/python -m training.train --name next --budget-minutes 30 --init training/league/peddler2.pt --no-imitation \
+    --no-same-turn-repay --min-bid 3 --buy-at-harbor --bank-needs-load --no-double-reprice \
+    --interaction-weight 0.8 --no-margin --solitaire-share 0.2 --merchant-share 0.15 --seller-share 0.35
+```
+
+The league is Consortium and Peddler v2 (both on by default) with the rest as in Round 5. Control: add `--league-nets all
+--peddler-share 0`.
 
 ## Not done, and next steps
 
@@ -409,3 +521,8 @@ Limits:
    Solitaires still stall), a control run of Peddler v1 trained 20 more minutes in the old league, a second seed, a league
    with Dealer seated (does the edge over Magnate and Consortium hold, and does Dealer fall below an even share?), and a
    rating against Magnate on the ladder's scale.
+9. **Multi-container purchases.** Test whether the nets take a second container when a harbor is stocked (positions with
+   2+ on the shelf), and run the with/without table rules comparison.
+10. **The new league.** Train in it (command in [The league after Round 5](#the-league-after-round-5)) and in the old one
+    (`--league-nets all --peddler-share 0`) with the same recipe, seed and budget, then compare win share and interaction
+    on the `interact` pools, not the ladder ELO.

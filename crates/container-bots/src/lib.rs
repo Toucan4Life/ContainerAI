@@ -6,6 +6,8 @@
 use container_engine::action::Action;
 use container_engine::observation::Observation;
 
+pub mod adaptive;
+pub mod archetype;
 pub mod broker;
 pub mod classic;
 pub mod consortium;
@@ -59,7 +61,7 @@ pub struct OpponentInfo {
 }
 
 /// Every opponent that can be selected.
-pub const OPPONENTS: [OpponentInfo; 12] = [
+pub const OPPONENTS: [OpponentInfo; 16] = [
     OpponentInfo {
         id: random::ID,
         name: "Random",
@@ -85,16 +87,34 @@ pub const OPPONENTS: [OpponentInfo; 12] = [
         elo: 1200,
     },
     OpponentInfo {
+        id: archetype::SHIPPER,
+        name: "Shipper",
+        description: "Lives off deliveries: it buys the cheapest cargo it can find, sails whenever that pays and bids hard for the cargo of others, usually with one or two containers aboard. It builds factories and warehouses, borrows, and lists its harbor stock at $2. A hand-set script, not a net: it never starts or outbids a Bank auction, and it can go broke and then sit idle for the rest of the game. Rated 1860 on the ladder of the nets and 1470 on the Random, Simple and Merchant ladder; against the ladder's strongest nets it outscores one of them in 11 to 18% of the comparisons (an even share is 50%).",
+        elo: 1860,
+    },
+    OpponentInfo {
         id: peddler::ID,
         name: "Peddler",
         description: "Haggler's recipe (trained from scratch, 80% dealing with opponents and 20% winning), trained under three table rules that it keeps: it sails to an opponent's harbor only to buy there, and then buys; it sails to the Bank only with a container to pick up; and it never reprices the same district twice in a row in a turn. It lists about two containers in three at $3 or less, buys from opponents about as often as Magnate and Consortium, and delivers more often than the other nets (11 a game against 8). It beats Merchant every time and Solitaire at three and four players, but is barely ahead of four Solitaires at five, and with two Solitaires at three players it sometimes cannot end the game (4% of such tables). It loses to Magnate, Dealer and Consortium. Also keeps Dealer's two rules. The rules bind this bot only, not its opponents, so its rating, from its training evaluation, is only roughly comparable.",
         elo: 1900,
     },
     OpponentInfo {
+        id: archetype::SHOWCASE,
+        name: "Showcase",
+        description: "Keeps a harbor stocked with many colors and resells what it buys from factories. It builds mostly warehouses, lists its stock at $2 in the factory and $3 in the harbor, and takes no loans. A hand-set script, not a net: it never starts or outbids a Bank auction. Rated 1911 on the ladder of the nets and 1451 on the Random, Simple and Merchant ladder; against the ladder's strongest nets it outscores one of them in 17 to 23% of the comparisons (an even share is 50%).",
+        elo: 1911,
+    },
+    OpponentInfo {
         id: haggler::ID,
         name: "Haggler",
         description: "A net trained from scratch to trade rather than to beat the strong nets: its reward was 80% dealing with opponents (buying from them, bidding on their deliveries, selling to them, pricing at $3 or less) and 20% winning, with no score margin. It lists about three containers in four at $3 or less. It beats Merchant and the solitaire variants easily and loses to Magnate, Dealer and Consortium. Same two rules as Dealer.",
         elo: 2000,
+    },
+    OpponentInfo {
+        id: archetype::PRODUCER,
+        name: "Producer",
+        description: "Produces more than anyone else and sells it cheap, at $1 from its factories. It builds factories and warehouses, borrows, and ships only part of its stock. A hand-set script, not a net: it never starts or outbids a Bank auction, and it can go broke and then sit idle for the rest of the game. Rated 2033 on the ladder of the nets and 1509 on the Random, Simple and Merchant ladder; against the ladder's strongest nets it outscores one of them in 26 to 38% of the comparisons (an even share is 50%).",
+        elo: 2033,
     },
     OpponentInfo {
         id: broker::ID,
@@ -121,6 +141,12 @@ pub const OPPONENTS: [OpponentInfo; 12] = [
         elo: 2230,
     },
     OpponentInfo {
+        id: adaptive::ID,
+        name: "Adaptive",
+        description: "A net trained from scratch for two hours to play well against three scripted players (a producer, a showcase seller and a shipper) rather than to imitate a style; it changes how it buys, sells and delivers with the table. It builds no factory or warehouse, produces little, buys at harbors and ships fuller cargoes than the other nets (three containers a delivery on average). It beats the three scripted players most of the time, but loses clearly to Peddler v2, which it never met in training. Plays under Peddler v2's rules (no same-turn loan repay, a first bid of at least $3, and the three table rules); the rules bind this bot only, so its rating, from its training evaluation, is only roughly comparable.",
+        elo: 2241,
+    },
+    OpponentInfo {
         id: magnate::ID,
         name: "Magnate",
         description: "A neural net trained by imitating Merchant, then by self-play against earlier versions of itself. It plays the action it rates best and never repeats itself in an identical position.",
@@ -128,8 +154,8 @@ pub const OPPONENTS: [OpponentInfo; 12] = [
     },
     OpponentInfo {
         id: consortium::ID,
-        name: "Consortium",
-        description: "The last net of the population study, a best response trained against the strongest nets before it. It plays the action it rates best and never repeats itself in an identical position. About 100 ELO above Magnate when they share a table.",
+        name: "Banker",
+        description: "The last net of the population study (Consortium in the reports and on the ladder), a best response trained against the strongest nets before it. It plays the Bank: it starts about ten Bank auctions a game, for container lots and cash lots, and it borrows. It builds no factory or warehouse and lists its own containers in the top lots, at the highest prices, but it still buys from opponents (about 18 containers a game at a table of scripted players). It plays the action it rates best and never repeats itself in an identical position. About 100 ELO above Magnate when they share a table.",
         elo: 2378,
     },
 ];
@@ -137,6 +163,10 @@ pub const OPPONENTS: [OpponentInfo; 12] = [
 /// Scripted economic archetypes for evaluation. They are not offered in the UI: they exist to test
 /// whether a net notices and uses the offers other kinds of players make.
 pub const ARCHETYPES: [&str; 3] = ["discounter", "bargain", "trader"];
+
+/// The three hand-set heuristics of the heuristic-first program (see [`archetype`]). They are listed
+/// in [`OPPONENTS`] like any other bot.
+pub const HEURISTICS: [&str; 3] = [archetype::PRODUCER, archetype::SHOWCASE, archetype::SHIPPER];
 
 /// Builds the opponent with this identifier. A seed gives the same choices every time.
 pub fn create(id: &str, seed: u64) -> Option<Box<dyn Opponent + Send>> {
@@ -159,7 +189,11 @@ pub fn create(id: &str, seed: u64) -> Option<Box<dyn Opponent + Send>> {
         haggler::ID => Some(Box::new(haggler::new(seed))),
         peddler::ID => Some(Box::new(peddler::new(seed))),
         peddler2::ID => Some(Box::new(peddler2::new(seed))),
+        adaptive::ID => Some(Box::new(adaptive::new(seed))),
         classic::ID => Some(Box::new(classic::new(seed))),
+        archetype::PRODUCER => Some(Box::new(archetype::Archetype::producer(seed))),
+        archetype::SHOWCASE => Some(Box::new(archetype::Archetype::showcase(seed))),
+        archetype::SHIPPER => Some(Box::new(archetype::Archetype::shipper(seed))),
         // Prices everything at $1 (factory) and buys at any price.
         "discounter" => Some(Box::new(Merchant::seller(seed, 4, 0))),
         // Prices around $2 and will not pay more than $3.

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Bot, CircleHelp, Coins, Landmark, Package, Ship, Warehouse } from "lucide-react";
 import ActionPanel from "./Actions";
 import Table, { Pick } from "./Table";
-import { COLOR_LABELS, LogEntry, PlayerView, Snapshot, cardValue, total } from "./engine";
+import { COLOR_LABELS, LogEntry, PlayerView, Snapshot, botName, cardValue, total } from "./engine";
 import { RichText, Swatch, money, seatColor } from "./ui";
 import type { Speed } from "./useGame";
 
@@ -100,7 +100,7 @@ function PlayerCard({ snap, seat, player }: { snap: Snapshot; seat: number; play
         </span>
         <div>
           <strong>{seatInfo.name}</strong>
-          <span className="player-kind">{isBot ? `${seatInfo.kind} AI` : "You"}</span>
+          <span className="player-kind">{isBot ? `${botName(seatInfo.kind)} AI` : "You"}</span>
         </div>
         {active && <span className="turn-pill">TURN</span>}
         {!active && deciding && <span className="turn-pill pill-deciding">DECIDING</span>}

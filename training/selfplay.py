@@ -9,8 +9,11 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 
-from training.env import (BOUGHT, DONE, MAX_PLAYERS, MERCHANT, PENDING, PLACED_AT, RANDOM, REAL_BIDS, SIMPLE, SOLD, STALLED,
+from training.env import (BOUGHT, CARGO_CASH, DELIVERIES, DONE, EARNED, MAX_PLAYERS, MERCHANT, OFFERED, OFFERED_COMPETITIVE,
+                          PENDING, PLACED_AT, RANDOM, REAL_BIDS, SHIPPED, SIMPLE, SOLD, SOLD_COLOR, SPENT, STALLED,
                           BatchEnv, win_fraction)
+
+NUM_COLORS = 5
 
 LEARNER = 0
 STALL_REWARD = 0.0  # a game that never ends is worse than any loss; the engine has no rule against it
@@ -54,6 +57,17 @@ FAIR_PRICE = 3  # a container left on the ship is worth $3 at the end, so a buye
 INTERACTION_WEIGHTS = (0.2, 0.2, 0.2, 0.4)  # bought, bids, sold, fair prices
 
 
+OBJECTIVES = ("interaction", "island", "producer", "showcase", "shipper")
+# Composites of the strategy terms use fixed relative weights; only the share of the whole reward adapts.
+# Strategic identity is an objective, not an action restriction: the terms pay the economic position
+# (market share, buyer choice), never an action such as producing or buying, so a seat may use any legal action.
+PRODUCER_WEIGHTS = (0.5, 0.2, 0.3)  # share of the table's sales, share of its sales money, share of offers at $3 or less
+SHARE_SCALE = 2.0  # a share of this many times 1/2 of a table's total earns the whole term (a third of a 3-seat table: 0.67)
+# Showcase variants: (colours buyers took from the seat, share of containers laid out at $3 or less, containers sold)
+SHOWCASE_VARIANTS = {"variety": (1.0, 0.0, 0.0), "fair": (0.5, 0.5, 0.0), "sales": (0.4, 0.2, 0.4)}
+SHOWCASE_VARIANT = "variety"  # `train --showcase-variant` sets it
+
+
 MARGIN_IN_INTERACTION_MIX = True  # `train --no-margin` clears it: the share that is not interaction is the win share alone
 
 
@@ -68,10 +82,79 @@ def interaction_term(inter, seat: int) -> float:
     return float(np.dot(INTERACTION_WEIGHTS, terms))
 
 
+def _share(inter, column: int, seat: int) -> float:
+    total = inter[:, column].sum()
+    return float(np.clip(SHARE_SCALE * inter[seat, column] / total, 0.0, 1.0)) if total > 0 else 0.0
+
+
+def producer_term(inter, seat: int) -> float:
+    """0..1 for controlling the supply market: the seat's share of the containers sold at the table and of
+    the money they brought, and offering at $3 or less. Production and buying rivals' stock pay nothing by
+    themselves; they count when they raise the seat's sales."""
+    row = inter[seat]
+    cheap = row[OFFERED_COMPETITIVE] / row[OFFERED] if row[OFFERED] else 0.0
+    return float(np.dot(PRODUCER_WEIGHTS, (_share(inter, SOLD, seat), _share(inter, EARNED, seat), cheap)))
+
+
+SHIPPER_WEIGHTS = (0.5, 0.3, 0.2)  # net delivery contribution, containers delivered, cargo utilisation
+NET_SCALE, DELIVERED_SCALE = 60.0, 12.0  # delivery cash less purchases that earns the whole term; containers delivered at which it is 0.76
+SHIP_CAPACITY = 5
+
+
+def shipper_term(inter, seat: int) -> float:
+    """0..1 for running a shipping business, on the deliverer's side of the transaction: the cash its accepted
+    deliveries brought (twice the winning bid) less what it paid for containers, the containers it delivered, and
+    how full its ships were. The Island points a delivery gives to the winning bidder are not paid: they belong to
+    the bidder, not the seat that shipped. No cargo size is required; a full ship pays only through the cash it brings."""
+    row = inter[seat]
+    net = float(row[CARGO_CASH:CARGO_CASH + 5].sum() - row[SPENT])
+    used = row[SHIPPED] / (SHIP_CAPACITY * row[DELIVERIES]) if row[DELIVERIES] else 0.0
+    terms = (np.clip(net / NET_SCALE, 0.0, 1.0), np.tanh(row[SHIPPED] / DELIVERED_SCALE), used)
+    return float(np.dot(SHIPPER_WEIGHTS, terms))
+
+
+def showcase_term(inter, seat: int) -> float:
+    """0..1 for being the partner buyers choose: the colours buyers took from the seat, fair pricing and
+    (by variant) containers sold. How the seat got its colours (own factory or purchases) is left open."""
+    row = inter[seat]
+    variety = float((row[SOLD_COLOR:SOLD_COLOR + NUM_COLORS] > 0).sum() / NUM_COLORS)
+    placed = row[PLACED_AT:PLACED_AT + 6]
+    fair = placed[:FAIR_PRICE].sum() / placed.sum() if placed.sum() else 0.0
+    return float(np.dot(SHOWCASE_VARIANTS[SHOWCASE_VARIANT], (variety, fair, np.tanh(row[SOLD] / SELL_SCALE))))
+
+
+def shaping_term(objective: str, inter, island, seat: int) -> float:
+    """The 0..1 term of a `--shaping-objective` for one seat; `island` is the seat's island points per seat."""
+    if objective == "interaction":
+        return interaction_term(inter, seat)
+    if objective == "island":
+        return island_term(island, seat)
+    if objective == "producer":
+        return producer_term(inter, seat)
+    if objective == "showcase":
+        return showcase_term(inter, seat)
+    if objective == "shipper":
+        return shipper_term(inter, seat)
+    raise ValueError(f"unknown shaping objective {objective!r}")
+
+
+def dual_step(mu: float, win: float, base_win, slack: float, lr: float, ceiling: float, warmup: int):
+    """One step of the win-slack controller; returns the new coefficient.
+
+    The first `warmup` observations only fill `base_win`. After that the floor is their mean minus `slack`;
+    the coefficient rises by `lr` times the win share's relative margin over the floor while it holds and
+    falls while it is broken, kept within `[0, ceiling]`."""
+    if len(base_win) < warmup:
+        base_win.append(win)
+        return mu
+    floor = float(np.mean(base_win)) - slack
+    return float(np.clip(mu + lr * (win - floor) / max(floor, 1e-3), 0.0, ceiling))
+
+
 def reward(scores: np.ndarray, players: int, welfare_weight: float = 0.0, win_only: bool = False,
            geomean_weight: float = 0.0, trade_weight: float = 0.0, traded=None, min_trade: float = 0.0,
            penalty: float = 0.0, island_weight: float = 0.0, island=None,
-           inter_weight: float = 0.0, inter=None) -> np.ndarray:
+           inter_weight: float = 0.0, inter=None, shaping: str = "interaction") -> np.ndarray:
     """Outcome per seat in 0..1: the share of opponents beaten, blended with the score margin.
 
     `welfare_weight` moves that share of the reward onto `table_welfare`, which every seat gets alike, so
@@ -79,7 +162,8 @@ def reward(scores: np.ndarray, players: int, welfare_weight: float = 0.0, win_on
     `win_only` pays the share of opponents beaten alone, with no margin term. `geomean_weight` pays that
     share plus a `table_geomean` term of that weight instead of the margin. `trade_weight` pays that share
     `min_trade` pays that share minus `penalty` times the seat's relative shortfall of `traded` below it.
-    `inter_weight` blends the default reward with `interaction_term`.
+    `inter_weight` blends the default reward with the `shaping` objective's term (`shaping_term`; `island` is
+    needed for the island objective).
     `trade_weight` pays that share plus, per seat, the `trade_term` of `traded`, the money of the deliveries it sold to or won from a player.
     """
     if inter_weight:
@@ -88,7 +172,7 @@ def reward(scores: np.ndarray, players: int, welfare_weight: float = 0.0, win_on
         own = 0.6 * win_fraction(scores, players) + 0.4 * (0.5 + 0.5 * np.tanh(margin))
         if not MARGIN_IN_INTERACTION_MIX:
             own = win_fraction(scores, players)
-        return (1.0 - inter_weight) * own + inter_weight * np.array([interaction_term(inter, p) for p in range(players)])
+        return (1.0 - inter_weight) * own + inter_weight * np.array([shaping_term(shaping, inter, island, p) for p in range(players)])
     if win_only:
         return win_fraction(scores, players)
     if island_weight:
@@ -456,7 +540,7 @@ class Roller:
         return rec, status, players, scores, [d[1] for d in done]
 
 
-def advantages(rec: Decisions, env_ids, seats, status, players, scores, lam=0.97, payoff=None, welfare_weight=0.0, win_only=False, geomean_weight=0.0, trade_weight=0.0, traded=None, min_trade=0.0, penalty=0.0, island_weight=0.0, island=None, inter_weight=0.0, inter=None):
+def advantages(rec: Decisions, env_ids, seats, status, players, scores, lam=0.97, payoff=None, welfare_weight=0.0, win_only=False, geomean_weight=0.0, trade_weight=0.0, traded=None, min_trade=0.0, penalty=0.0, island_weight=0.0, island=None, inter_weight=0.0, inter=None, shaping="interaction"):
     """Per-decision advantage and return. The only reward is the outcome at the game's end.
 
     The outcome is `reward` of the final scores, or `payoff[game, seat]` when given (the canonical
@@ -480,7 +564,7 @@ def advantages(rec: Decisions, env_ids, seats, status, players, scores, lam=0.97
             r = reward(scores[e], int(players[e]), welfare_weight, win_only, geomean_weight, trade_weight,
                    None if traded is None else traded[e], min_trade, penalty,
                    island_weight, None if island is None else island[e],
-                   inter_weight, None if inter is None else inter[e])[p] if payoff is None else payoff[e, p]
+                   inter_weight, None if inter is None else inter[e], shaping)[p] if payoff is None else payoff[e, p]
         v = value[group]
         nxt = np.append(v[1:], r)
         delta = nxt - v
@@ -492,7 +576,7 @@ def advantages(rec: Decisions, env_ids, seats, status, players, scores, lam=0.97
     return adv, ret, keep
 
 
-def table_stats(status, players, scores, tables, learner_seats_only=True, welfare_weight=0.0, win_only=False, geomean_weight=0.0, trade_weight=0.0, traded=None, min_trade=0.0, penalty=0.0, island_weight=0.0, island=None, inter_weight=0.0, inter=None):
+def table_stats(status, players, scores, tables, learner_seats_only=True, welfare_weight=0.0, win_only=False, geomean_weight=0.0, trade_weight=0.0, traded=None, min_trade=0.0, penalty=0.0, island_weight=0.0, island=None, inter_weight=0.0, inter=None, shaping="interaction"):
     """Mean learner reward over finished games, and how many games finished."""
     rewards = []
     for i, (n, kinds, *_) in enumerate(tables):
@@ -501,6 +585,6 @@ def table_stats(status, players, scores, tables, learner_seats_only=True, welfar
         r = reward(scores[i], n, welfare_weight, win_only, geomean_weight, trade_weight,
                    None if traded is None else traded[i], min_trade, penalty,
                    island_weight, None if island is None else island[i],
-                   inter_weight, None if inter is None else inter[i])
+                   inter_weight, None if inter is None else inter[i], shaping)
         rewards += [r[s] for s in range(n) if kinds[s] == LEARNER]
     return (float(np.mean(rewards)) if rewards else 0.0), len(rewards)

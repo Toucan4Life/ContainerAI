@@ -57,7 +57,7 @@ cargo test -p container-engine
 
 ## Opponents
 
-The crate `crates/container-bots` holds the computer opponents. An opponent implements `Opponent::choose(&Observation, &[Action]) -> Action`, so it only sees what its seat sees. `OPPONENTS` lists the ones the UI offers, and `create(id, seed)` builds one. A seed gives the same choices every time. Every entry carries an `elo` rating, which the UI shows next to the name. The scripted bots' ratings come from `training/ladder.json`. Magnate is not on the ladder, so its rating is the result of `anchors rate` (see [Exporting a net to the web UI](#exporting-a-net-to-the-web-ui)). Opponents trained with PyTorch are added to the same list once they are rated.
+The crate `crates/container-bots` holds the computer opponents. An opponent implements `Opponent::choose(&Observation, &[Action]) -> Action`, so it only sees what its seat sees. `OPPONENTS` lists the bots the engine can seat and the web API reports, and `create(id, seed)` builds one. The setup menu shows five of them, the ones named in `MENU_OPPONENTS` (`frontend/src/Setup.tsx`): Solitaire, Shipper, Showcase, Producer and **Banker**, which is the net `consortium` under the name of how it plays (see [Exporting a net to the web UI](#exporting-a-net-to-the-web-ui)). The others stay in `OPPONENTS`, so the API, the arena and the tests still reach them. Each menu entry has a one-line note under its picker and the full description as a tooltip. A seed gives the same choices every time. Every entry carries an `elo` rating, which the UI shows next to the name. The scripted bots' ratings come from `training/ladder.json`. Magnate is not on the ladder, so its rating is the result of `anchors rate` (see [Exporting a net to the web UI](#exporting-a-net-to-the-web-ui)). Opponents trained with PyTorch are added to the same list once they are rated.
 
 | Id | Name | ELO | Plays |
 |---|---|---|---|
@@ -65,12 +65,76 @@ The crate `crates/container-bots` holds the computer opponents. An opponent impl
 | `simple` | Simple | 263 | The legal action with the highest fixed priority, and a random one among equals. It produces, loads the ship, delivers to the Island and buys cheap containers, and bids a quarter of its cash in delivery auctions. It takes a loan only at $0, repays one when it holds $25 or more, and never builds, calls the Bank or buys out. |
 | `merchant` | Merchant | 932 | Simple's priorities with 32 parameters tuned by evolution strategy in self-play (`arena` crate, `tune` binary): it also builds, borrows and bids by cargo. |
 | `solitaire` | Solitaire | 1200 | The bot of `Solo_Variant_v1.1.pdf` played as an ordinary seat: sail, produce, buy from a factory, buy from a harbor, reprice, build, with a d20 for every price and purchase (`crates/container-bots/src/solitaire.rs`). It has real cash here, so it bids the rolled shipment value, takes a loan at $0 and repays when rich. A bot with nothing else to do rolls a d20 and calls the Bank on 11+ (fullest container lot, cash bid by the shipment table), and outbids an opponent's cash bid on 16+. Rated against Random, Simple and Merchant (6,000 arena games, 3 to 5 seats): 1069 ± 18 on that field, where Merchant is 800 and sits at 932 on the ladder, so about 1200 on the ladder scale. |
+| `shipper` | Shipper | 1860 | A hand-set script, not a net (`crates/container-bots/src/archetype.rs`, Phase H0): every legal action is valued in dollars of final score and the best one is played, and Producer, Showcase and Shipper differ only in a profile of 11 numbers. Shipper buys the cheapest cargo it can find, sails whenever that pays, bids hard for the cargo of others, usually with one or two containers aboard, and lists its harbor stock at $2. It builds factories and warehouses and borrows, and it can go broke (cash $0, two loans, nothing to sell) and then only burns turns. It never starts or outbids a Bank auction. Rated 1860 [1840, 1882] on the full ladder (the scale of this list) and 1470 on the Random, Simple and Merchant ladder: 3,000 `DEV` games each, `training/heuristic_elo.py`, `reports/strategist/heuristic_elo.md`. In duels against `run1`, `exploit_run2`, `run2` and Consortium it outscores the net in 11% to 18% of the games (an even share is 50%), so the rating averages many easy wins over the scripted bots with few wins over the strong nets. |
 | `peddler` | Peddler | 1900 | The net from `runs/exp/scratch_rules`, embedded as `weights/peddler.bin`: Haggler's recipe (from scratch, 30 minutes, `--interaction-weight 0.8 --no-margin --seller-share 0.35 --min-bid 3 --no-same-turn-repay`, seed 41) plus three rules on the learner's seat, `--buy-at-harbor --bank-needs-load --no-double-reprice`: it sails to an opponent's harbor only to buy there (and then buys), to the Bank only with a container to pick up and room for it, and never reprices the same district twice in a row in a turn. The bot keeps all five rules (`Neural::without_same_turn_repay`, `with_min_bid(3)` and `with_table_rules`); opponents are not bound by them. On the nets pool it lists 68% of its containers at $3 or less (Dealer 31%, Magnate 3%, Consortium 1%), buys 14.2 containers a game from opponents (Magnate 15.8, Consortium 15.5, Haggler 13.2, Dealer 11.1) and delivers 10.9 times a game (the others 7.5-7.9). It beats Merchant in every game (600), Solitaire at 3 players (.99, but 4% of those tables stall) and at 4 (.66), and is barely ahead of four Solitaires at 5 (.24 against a fair .20); it wins about 6% against Magnate, Dealer and Consortium. Haggler is the stronger bot against the weak ones. Its rating is the trainer's eval (1024 games, the rules on its seat only), so it is not comparable with unrestricted ratings; one seed. |
+| `showcase` | Showcase | 1911 | A hand-set script on the same framework as Shipper (see its row). It keeps a harbor stocked with many colors and resells what it buys from factories. It builds mostly warehouses (about 3 a game), lists its stock at $2 in the factory and $3 in the harbor and takes no loans, so it never goes broke. It never starts or outbids a Bank auction. Rated 1911 [1889, 1925] on the full ladder and 1451 on the Random, Simple and Merchant ladder (3,000 `DEV` games each). In duels against `run1`, `exploit_run2`, `run2` and Consortium it outscores the net in 17% to 23% of the games. |
 | `haggler` | Haggler | 2000 | The net from `runs/exp/scratch_w08`, embedded as `weights/haggler.bin`: trained from scratch (short imitation start, no warm start) for 30 minutes with `--interaction-weight 0.8 --no-margin --seller-share 0.35 --min-bid 3 --no-same-turn-repay`, so the reward is 80% dealing with opponents and 20% win share, with no score margin. Same two rules as Dealer. Lists about 3 containers in 4 at $3 or less, beats Merchant and the solitaire variants, loses to Magnate, Dealer and Consortium (about 4% win share against them). Its rating is the trainer's eval; one seed. |
+| `producer` | Producer | 2033 | A hand-set script on the same framework as Shipper (see its row). It produces more than anyone else and sells it cheap, at $1 from its factories and $3 from its harbor. It builds about one factory and one or two warehouses a game, borrows and ships only part of its stock; like Shipper it can go broke and then only burns turns. It never starts or outbids a Bank auction. Rated 2033 [2016, 2049] on the full ladder and 1509 on the Random, Simple and Merchant ladder (3,000 `DEV` games each). In duels against `run1`, `exploit_run2`, `run2` and Consortium it outscores the net in 26% to 38% of the games. |
 | `broker` | Broker | 2150 | The net from `runs/scratch_constrained/final.pt`, embedded as `weights/broker.bin`, trained from scratch with `--no-same-turn-repay --min-bid 3 --min-trade 45 --scripted-share 0.7`. The bot keeps both rules: it bids at least $3 to open a delivery auction and never repays a loan the turn it takes it. Its rating is the trainer's final eval (1024 games), not `anchors rate`. |
 | `dealer` | Dealer | 2170 | The net from `runs/inter_B/final.pt`, embedded as `weights/dealer.bin`: Broker trained 45 more minutes in league self-play with `--interaction-weight 0.5`. Same two rules as Broker (bid at least $3 to open a delivery auction, no same-turn repay). It buys from opponents, bids on their deals, and lists about 4 containers in 10 at $3 or less. Its rating is the trainer's eval, not `anchors rate`. |
 | `peddler2` | Peddler v2 | 2225 | The net from `runs/exp/scratch_rules_sol_ft`, embedded as `weights/peddler2.bin`: Peddler (`runs/exp/scratch_rules/final.pt`) trained 20 more minutes (warm start, no imitation, seed 44) with the same reward and rules, in a league that seats Solitaire (`--solitaire-share 0.2`), extra Merchants (`--merchant-share 0.15`) and a frozen copy of Peddler under the learner's rules (`--peddler runs/exp/scratch_rules/final.pt --peddler-share 0.15`). The bot keeps the same five rules as Peddler (`Neural::without_same_turn_repay`, `with_min_bid(3)` and `with_table_rules`); opponents are not bound by them. On the nets pool it lists about 80% of its containers at $3 or less, buys 15.0 containers a game from opponents (Magnate 16.5, Consortium 16.3, Dealer 11.0), sells 17.5 (they sell 12.8-14.5) and delivers 11.0 times a game (they deliver 7.0-7.8). It beats Merchant in 99.8% of the games (600) and Solitaire at 3, 4 and 5 players (.99, 1.00, .97; 2% of the 3-player tables with two Solitaires stall), and wins .52 of the games against Magnate, .37 against Consortium and .27 against Dealer (±.04; an even share is .26; the three together .39 against Peddler's .06). Its rating is the trainer's eval (2225.7, 1024 games, the rules on its seat only), so it is not comparable with unrestricted ratings, and it may understate the bot against the strong nets; one seed. `peddler` is kept as it was. |
+| `adaptive` | Adaptive | 2241 | The net from `runs/strategist/adaptive_scratch_s2`, embedded as `weights/adaptive.bin`: trained from scratch (the usual Merchant imitation start) on a 120-minute budget, 2,062,512 games, with the trainer's default reward and Peddler's three table rules plus `--no-same-turn-repay --min-bid 3` (`reports/strategist/run_adaptive_scratch.sh`, seed 2). 70% of its opponent seats in training were Producer, Showcase or Shipper (the Phase H0 heuristics), the rest snapshots of itself and scripted bots; Peddler v2, Magnate and Consortium were not in the pool. The bot keeps the same five rules as Peddler v2 (`Neural::without_same_turn_repay`, `with_min_bid(3)` and `with_table_rules`); opponents are not bound by them. It builds no factory or warehouse and produces little (2.6 times a game), buys containers at harbor lots (16.8 a game) and delivers about three containers per delivery (a full ship of five on 31% of its trips; Peddler v2 1.5). It wins .68 / .88 / .91 of the games among the three heuristics at 3 / 4 / 5 players (an even share is .33 / .25 / .20) but only .16 / .06 / .02 against Peddler v2, which it never met in training (100 `DEV` seeds). Its rating is the trainer's eval (2241.0, the rules on its seat only), so it is only roughly comparable; one seed of a two-seed run (the other scored 2205.7). |
 | `magnate` | Magnate | 2280 | The net from `runs/defense_run2_vs_exploiter_30m/final.pt`, embedded as `weights/magnate.bin`. It plays the action it rates best and never repeats itself in an identical position (see [Stalls and memory safety](#stalls-and-memory-safety)). It beats Merchant about 99.9% of the time. |
+
+### Where each bot comes from
+
+A net is either **trained from scratch** (random start, no `--init`; the first 17% of its budget copies Merchant, the
+trainer's default) or **warm-started** from another net's checkpoint (`--init`, no imitation). Every net therefore traces
+back to Merchant as its teacher. There are seven from-scratch roots (`run1`, Broker, `traders`, Classic, Haggler, Peddler,
+Adaptive), and no checkpoint is shared between them. The table also covers `classic` and `consortium`, which have no row above:
+Classic is described under [A strong AI that interacts with its
+opponents](#a-strong-ai-that-interacts-with-its-opponents) and Consortium under [Exporting a net to the web
+UI](#exporting-a-net-to-the-web-ui).
+
+| Bot | Derives from | How it differs |
+|---|---|---|
+| Random, Simple, Solitaire | nothing | Scripted. Solitaire is the bot of the solo variant. |
+| Producer, Showcase, Shipper | nothing | Scripted (Phase H0): one decision framework (`archetype.rs`) that values every legal action in dollars of final score, with a profile of 11 hand-set numbers each. They never use the Bank. |
+| Merchant | Simple | Simple's priorities with 32 parameters tuned by evolution strategy in self-play. |
+| `discounter`, `bargain`, `trader` | Merchant | Scripted cheap sellers and a buyer with a price limit; not in the UI. |
+| `run1` (anchor) | Merchant, imitation start | From scratch, 60 minutes. |
+| `run2` (anchor) | `run1` | +30 minutes of league self-play. |
+| `exploit_run2` (anchor) | `run2` | Best-response exploiter of `run2`. |
+| Magnate | `run2` | +30 minutes with `exploit_run2` in the league (`defense_run2_vs_exploiter_30m`). |
+| Consortium | Magnate | Four best-response warm starts: `psro02`, `psro03`, `psro05`, `psro08`. Its weights are 0.996 alike to Magnate's. Shown as Banker in the UI; the id stays `consortium`. |
+| Broker | Merchant, imitation start | From scratch, `--min-bid 3 --min-trade 45`. |
+| Dealer | Broker | +45 minutes with `--interaction-weight 0.5`. |
+| `traders` (anchor) | Merchant, imitation start | From scratch against trader opponents. |
+| Classic | Merchant, imitation start | From scratch with `--classic`: nobody calls the Bank. |
+| Haggler | Merchant, imitation start | From scratch, 0.8 interaction + 0.2 win share, no margin. |
+| Peddler | Merchant, imitation start | Haggler's recipe and seed (41) plus the three table rules. Not a descendant of Haggler: the weights are 0.36 alike. |
+| Peddler v2 | Peddler | +20 minutes in a league with Solitaire, extra Merchants and a frozen Peddler. |
+| Adaptive | Merchant, imitation start | From scratch, 120 minutes, seed 2: 70% of the opponent seats are Producer, Showcase or Shipper (`--heuristic-share 0.7`), Peddler's rules. Not a descendant of Peddler v2. |
+
+Evidence: `init` in `runs/*/config.json`, `parent` in `populations/psro/manifest.json`, and byte-identical weights
+(`weights/magnate.bin` is `defense_run2_vs_exploiter_30m`, `psro08.bin` is `populations/psro/psro08.pt`, `peddler.bin`,
+`peddler2.bin` and `haggler.bin` are the `weights.bin` of their runs; `runs/exp/dealer_init.pt` exports to `dealer.bin`).
+The run directories of Broker (`scratch_constrained`), Dealer (`inter_B`), Classic (`classic_net`) and `traders`
+(`scratch_traders`) are not kept, so those links come from the notes above, the trainer defaults and the weight check. The
+flat weights agree: the cosine similarity is 0.92 to 1.00 along a warm-start chain and 0.00 to 0.03 between unrelated
+nets, apart from nets that share a seed (Haggler and Peddler, 0.33 to 0.36; Broker and `traders`, 0.65 to 0.70, which
+suggests the same seed there too).
+
+**The training league.** Each opponent seat of a training table is drawn in this order: the frozen `--peddler` net
+(Peddler v2, `training/league/peddler2.pt`, chance `--peddler-share`, 15% by default), one of the Phase H0 heuristics
+(Producer, Showcase or Shipper; chance `--heuristic-share`, off by default), Solitaire (`--solitaire-share`), an
+extra Merchant (`--merchant-share`), then, with chance `1 - --scripted-share` (45% by default), one of the learner's last
+five snapshots or one of the anchor nets in `--league-nets`; otherwise a cheap seller (`--seller-share`), a trader
+(`--trader-share`), or Merchant, Simple, Random at 60, 30 and 10%. The anchors are the nets of `training/anchors/` rated in
+`training/ladder.json`: `run1` (2173), `run2` (2239), `exploit_run2` (2174), `consortium` (2286) and `traders` (1907). All
+five stay on the ladder, which every evaluation rates against and `--exploit` needs, but the league takes only `consortium`
+unless `--league-nets` says otherwise (`all` is the league as it was before Peddler v2 joined; `consortium,traders` adds
+one back). With the default shares an opponent seat is Peddler v2 15%, Consortium 6%, a snapshot of the learner 32% and a
+scripted bot 47%. Magnate, Broker, Dealer, Haggler and Classic have never been seated.
+
+The narrowing follows the request to keep high-rated nets that do not trade out of the league. It is not a measured gap in
+buying: an audit puts all five anchors at 16 to 22 containers bought a game, `traders` highest, with 1 to 25% of their
+containers laid out in the cheap lots (see [The league after Round 5](docs/interaction_program.md#the-league-after-round-5)).
+No run has been trained in the new league yet, so its effect on strength and interaction is not known.
+
+The Peddler v2 seat plays under the learner's table rules (`BatchEnv.mirror_rules`), so a run should set all five,
+`--no-same-turn-repay --min-bid 3 --buy-at-harbor --bank-needs-load --no-double-reprice`, and the trainer warns at
+the start when it does not. `--peddler-share 0` or `--peddler ''` removes the seat.
 
 ```sh
 cargo test -p container-bots
@@ -99,7 +163,7 @@ cargo build --release -p container-env
 .venv/bin/python -m training.train --name run1 --budget-minutes 30   # budget is adjustable upward
 ```
 
-A run does imitation of Merchant (DAgger), then PPO league self-play: the learner sits at tables with frozen earlier checkpoints and the scripted bots, rewarded by final rank and score margin. 8% of the budget is kept for the final evaluation and export. Everything is written to `runs/<name>/` (`metrics.jsonl`, `status.json`, checkpoints, and `weights.bin` for the Rust bot). Training rows include `games_per_sec`, the number to watch when optimising.
+A run does imitation of Merchant (DAgger), then PPO league self-play: the learner sits at tables with frozen earlier checkpoints, Consortium, Peddler v2 and the scripted bots (see [The training league](#where-each-bot-comes-from)), rewarded by final rank and score margin. 8% of the budget is kept for the final evaluation and export. Everything is written to `runs/<name>/` (`metrics.jsonl`, `status.json`, checkpoints, and `weights.bin` for the Rust bot). Training rows include `games_per_sec`, the number to watch when optimising.
 
 ### Anchors
 
@@ -114,7 +178,7 @@ The scripted bots stop measuring a strong net: beating Merchant 97% of the time 
 
 `rate` and `duel` take `--games` (default 3000) and `--seed` (default 7). Rate with two seeds before believing a gap of a few ELO: the same net rated with seeds 7 and 8 at 2,000 games differed by about 12 ELO. `duel` also takes `--sample-target`, which makes the anchor sample from its policy instead of playing its best action.
 
-Evaluation seats the net with two to four opponents drawn from the scripted bots and every anchor (Merchant is always in the field) and rates it by maximum likelihood against their ratings. A run started afterwards also meets the anchors as permanent league opponents. Re-adding a name replaces it and re-rates it against the others; the other anchors are not refitted, so add them in order of strength.
+Evaluation seats the net with two to four opponents drawn from the scripted bots and every anchor (Merchant is always in the field) and rates it by maximum likelihood against their ratings. A run started afterwards meets as league opponents only the anchors that `--league-nets` names (`consortium` by default). Re-adding a name replaces it and re-rates it against the others; the other anchors are not refitted, so add them in order of strength.
 
 A game that stalls (the engine has no anti-stall rule; the env ends one after 2500 actions) counts as a loss for every seat (reward 0) instead of being dropped, so the policy learns to finish games. `stalled` is logged per iteration and charted. This applies to training only. The evaluations in `training/anchors.py` (`anchors rate`, `anchors duel` and the trainer's checkpoint evaluations) leave stalled games out of the rating instead, so a stall never lowers a rating, but they report how many it was (`completed`, `stalled`, `stall_rate`; `games` is the number requested).
 
@@ -130,7 +194,7 @@ Every table seats the learner once (3 to 5 players) and every other seat plays t
 
 Each evaluation logs two things. `elo`, `games` and `vs_<opponent>` are the normal ladder evaluation, identical to any other run, so an exploiter is directly comparable with every other net. The `duel_*` keys come from exploit tables (the net in one seat, the anchor greedy in all the others): `duel_vs_<anchor>` is the share of opponents beaten (0.5 for equal play), `duel_win_rate` is the share of games won against `duel_fair_rate` (what equal players would win) and `duel_margin` is the points ahead of the average opponent. The dashboard shows them on an "Exploit duel" card, which only appears for runs that have them. An exploit evaluation plays both sets of games, so it takes about twice as long as a normal one; with a budget of a couple of minutes the final evaluation can overrun the 8% reserve (a 1.5-minute smoke test finished after 103 s). At 30 minutes the reserve is ample.
 
-An exploiter's duel numbers say how well it beats copies of the anchor, not how strong it is: see the results below. Rate it on the whole ladder with `python -m training.anchors rate runs/exploit_run2/final.pt`. `anchors add` registers it, which also makes it a permanent opponent in later runs. `exploit_run2` is registered at 2174.4 ELO and is therefore a permanent opponent for runs started after the control experiment.
+An exploiter's duel numbers say how well it beats copies of the anchor, not how strong it is: see the results below. Rate it on the whole ladder with `python -m training.anchors rate runs/exploit_run2/final.pt`. `anchors add` registers it on the ladder; it is a training opponent only for runs whose `--league-nets` names it. `exploit_run2` is registered at 2174.4 ELO. It was a permanent opponent for the runs started after the control experiment, and is one now only with `--league-nets all` or `--league-nets consortium,exploit_run2`.
 
 ### Throughput
 
@@ -196,8 +260,8 @@ which supports a small, real improvement (roughly 66 ELO), not a large jump.
 The corresponding checkpoints are preserved at `runs/run1/`, `runs/run2/`, and
 `runs/exploit_run2/`; their evaluated copies are `training/anchors/run1.pt`,
 `training/anchors/run2.pt`, and `training/anchors/exploit_run2.pt`. Keep anchor checkpoints and
-`training/ladder.json` together: a ladder entry without its checkpoint cannot be used as a league
-opponent.
+`training/ladder.json` together: a ladder entry without its checkpoint cannot be used as an opponent,
+in an evaluation or in the league.
 
 #### How the learner works
 
@@ -321,7 +385,7 @@ The trainer also uses PyTorch's `expandable_segments` allocator setting because 
 `exploit_run2` is a best-response exploiter of `run2` (`--exploit run2`, seed 3, greedy target). It
 started as a copy of `run2`, trained for 1,665.6 seconds of a 30-minute budget (197,144 games,
 37,236,209 decisions, about 118 games/s). It was later registered at 2174.4 ELO as a permanent
-league opponent for the defense experiment below. Its training-time duel evaluations (256 games,
+league opponent for the defense experiment below (since Round 5 the default league no longer seats it). Its training-time duel evaluations (256 games,
 1,024 for the final one) show the share of opponents beaten rising from 0.52 to about 0.64 in
 roughly the first 10 minutes and then plateauing between 0.64 and 0.71. The final evaluation won
 42.1% of games against a fair share of 25.8%, a margin of +8.67.
@@ -409,8 +473,8 @@ What is not known:
 
 #### Exporting a net to the web UI
 
-The strongest net is in the UI as **Magnate** (`crates/container-bots/src/magnate.rs`). It is
-`runs/defense_run2_vs_exploiter_30m/final.pt`. That run and `control_run2_30m` tied (10,000-game
+The strongest net before Consortium (below) is **Magnate** (`crates/container-bots/src/magnate.rs`); it is in the
+engine and the API, and the setup menu does not list it. It is `runs/defense_run2_vs_exploiter_30m/final.pt`. That run and `control_run2_30m` tied (10,000-game
 ladder: 2278.0 against 2279.3), so the pick was a tie-break, not a finding: the defense net has the
 higher rating pooled over the rating runs (about 2277 against about 2273) and the higher final
 training evaluation (2273.6 against 2260.4). To ship the control net instead, replace
@@ -432,12 +496,15 @@ Steps for exporting any net (use `magnate.rs` as the template):
 4. `cargo test -p container-bots -p container-web`. The Magnate tests are the template: it must beat
    Merchant at every game length and play a whole game inside a `Session` with other bots.
 5. `cd frontend && npm run wasm` (`npm run dev` and `npm run build` run it first). The setup
-   dropdown is filled from `opponents()` as "Name · ELO n", so no frontend change is needed.
+   dropdown is filled from `opponents()` as "Name · ELO n", but only with the ids in
+   `MENU_OPPONENTS` in `frontend/src/Setup.tsx`: add the id there with a one-line note (it is shown
+   under the picker, and the `OPPONENTS` description is its tooltip), or the bot is available to
+   the API and not in the menu.
 
 Magnate's `elo` label is 2280. The six ratings of it at Standard length, four in Python and two in
 Rust, range from 2267 to 2286 and pool (about 39,000 games) to about 2280 with a standard error of
 roughly 3-4. It is not a ladder anchor: `training/ladder.json` is unchanged, and `anchors add` would
-make it a permanent league opponent for later runs. The UI label measures it against the ladder
+put it on the ladder every evaluation rates against (a league opponent only if `--league-nets` names it). The UI label measures it against the ladder
 bots, not against a human.
 
 Length: the trainer and the arena only play Standard length (`GameConfig::new(n)`), yet the net
@@ -470,6 +537,15 @@ takes the WASM bundle from about 1.8 MB to 3.3 MB. Its UI label is **2378**: Mag
 from 6,000 Rust-arena games of Consortium against Magnate at 3-5 seats (seed 21, 2 stalled; a Bradley-Terry fit of
 winner share). The ladder protocol cannot show the difference (10,000 games, greedy and unguarded, rates psro08 2280.8 with 3%
 stalls, because the anchor field is saturated), so the label is a head-to-head figure on the ladder's scale, not a ladder rating.
+
+The UI calls it **Banker** (the `name` of its `OPPONENTS` entry; the id `consortium`, the weights file, the ladder anchor and
+every report keep the old name). The name says how it plays. Against Producer, Showcase and Shipper (100 `DEV` seeds at 3, 4
+and 5 seats: `training.action_profile --net consortium=populations/psro/psro08.pt: --seats N --seeds 100`, the colon after the
+path meaning no table rules) it builds no factory and no warehouse, starts 11 to 12 Bank auctions a game, borrows, ships 3.1 to
+3.95 containers a delivery and sells 0.6 to 2.4 containers a game, and it wins .50 / .77 / .47 of the games at 3 / 4 / 5 seats (an
+even share is .33 / .25 / .20). It does not ignore the others, though: it buys 17 to 20 containers a game from them, and on the
+nets pool the strong nets, Consortium among them, sell 12.8 to 14.5 a game (Peddler v2's row). The UI text says that, not that it
+never deals with opponents.
 
 #### Restricted learners (`--no-call-bank`, `--buy-at-harbor`, `--no-same-turn-repay`) and throughput
 
@@ -523,8 +599,15 @@ scratch runs the blended rewards below did little, so treat them as experiments)
   `-7`, the solitaire-variant bot) or Merchant. Both are drawn before the other kinds, so Merchant also keeps its place
   among the scripted seats.
 - `--peddler CKPT`, `--peddler-share P`: a permanent frozen net in the league (slot 900), drawn first with chance P for
-  each opponent seat. It plays under the table rules the learner plays by (`BatchEnv.mirror_rules`), as the shipped bot
-  does; the other frozen snapshots and the anchor nets stay unrestricted.
+  each opponent seat. It defaults to Peddler v2 (`training/league/peddler2.pt`) at P = 0.15; `--peddler-share 0` or
+  `--peddler ''` turns the seat off. It plays under the table rules the learner plays by (`BatchEnv.mirror_rules`), as the
+  shipped bot does, so train with all five rules; the other frozen snapshots and the anchor nets stay unrestricted.
+- `--heuristic-share P`: the chance that an opponent seat of a league table is one of the three Phase H0 heuristics
+  (Producer, Showcase or Shipper, each equally likely; seat kinds `-8`, `-9`, `-10`). It is drawn right after the Peddler
+  seat. At 0, the default, nothing is drawn, so the tables of older runs do not change. The adaptive generalist `adaptive_s1`
+  trained with 0.7 (`reports/strategist/run_adaptive.sh`; results in [docs/strategist_plan.md](docs/strategist_plan.md)).
+- `--league-nets NAMES`: the anchors the learner trains against, `consortium` by default; `all` or a comma-separated list
+  (`consortium,traders`), or `none`. The ladder, and so every rating and `--exploit`, still uses all five anchors.
 - `--island-weight W`: that share of the reward is the points the seat's score took from the Island (`selfplay.island_term`,
   1 at 80 points), the rest the share of opponents beaten. Exclusive with the other reward options.
 - `--classic`: the classic rule. Nobody at the table may call the Bank (scripted bots and frozen copies included), so
@@ -662,10 +745,12 @@ Measured on Magnate (150 to 200 games, three nets plus a Merchant): about 120 bi
 | `--interaction-weight W` | Reward share for an interaction score: containers bought from opponents, bids of $2 or more on their deals, containers sold, and the share of containers listed at $3 or less (a leftover container is worth $3, so a buyer cannot lose at that price). The per-seat counters come from the env (`INTERACTION`, `BatchEnv.interaction()`). |
 | `--max-price P` | A hard rule: the seat never lays a container out in a lot dearer than $P. |
 | `python -m training.interplay` | Plays a net at every seat of mixed tables against Consortium, Magnate, Broker and `scratch_trade`: winner share with its fair share, containers bought, bids, sales, prices and the share listed at $3 or less. |
+| `--league-nets NAMES`, `--peddler`, `--peddler-share` | Which anchors and which frozen net the learner trains against: Consortium and Peddler v2 (15% of the opponent seats) by default. The ladder keeps all five anchors. |
+| `--heuristic-share P` | The chance that an opponent seat is Producer, Showcase or Shipper (the Phase H0 heuristics). Off by default. |
 | `anchors add` | `consortium` (2286) and `traders` (1907) are on the ladder. |
 
-Deployed bots: **Broker** (`--min-bid 3 --min-trade 45`, 2150), **Dealer** (Broker plus `--interaction-weight 0.5`, 2170) and **Classic** (`--classic`, 2230) are in the UI list
-and the arena, with their rules built into the bot (`Neural::with_min_bid`, `without_bank`, `without_same_turn_repay`).
+Deployed bots: **Broker** (`--min-bid 3 --min-trade 45`, 2150), **Dealer** (Broker plus `--interaction-weight 0.5`, 2170) and **Classic** (`--classic`, 2230) are in the opponent list
+(`OPPONENTS`; the setup menu shows only five bots) and the arena, with their rules built into the bot (`Neural::with_min_bid`, `without_bank`, `without_same_turn_repay`).
 A net trained under a rule must be deployed under it.
 
 #### Results
@@ -815,7 +900,9 @@ A later program (reproducible interaction baselines with the `interact` binary, 
    one is a bargain. Add scripted sellers that price at $1 or $2, and a reward or constraint that a cheap offer is taken when
    the seat can afford it.
 2. **Cap the bid money.** The mint loop makes high bids profitable among copies of the same net. Cap bids, or pay the
-   reward on the score net of minted money, before using `--island-weight` or `--trade-weight` at high values.
+   reward on the score net of minted money, before using `--island-weight` or `--trade-weight` at high values. The engine
+   has a cap tied to what a cargo is worth to the bidder, `--bid-within-value` (see `docs/strategist_plan.md`, Phase 1); no
+   full-length run has been trained with it yet.
 3. **Strength.** Every from-scratch run is 60 to 350 ELO under Magnate after 30 minutes. Start from Consortium or Magnate under
    the new constraints and train for 90 minutes or more, with several seeds.
 4. **A better human proxy.** Merchant and the traders are not humans. The only real check is playing the UI against Broker and

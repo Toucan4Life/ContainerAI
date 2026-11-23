@@ -10,12 +10,17 @@ from training.model import PolicyNet, load_checkpoint, save_checkpoint
 MEM_DIM = 28  # container_bots::memory::MEM_DIM
 
 
-def add_memory(net: PolicyNet) -> PolicyNet:
+def widen_inputs(net: PolicyNet, extra: int) -> PolicyNet:
+    """The same net reading `extra` more state inputs, whose first-layer columns are zero."""
     state, action, hidden = net.dims
-    out = PolicyNet(state + MEM_DIM, action, hidden)
+    out = PolicyNet(state + extra, action, hidden)
     out.load_state_dict(net.state_dict() | {
-        "t1.weight": torch.cat([net.t1.weight.data, torch.zeros(hidden, MEM_DIM)], dim=1)})
+        "t1.weight": torch.cat([net.t1.weight.data, torch.zeros(hidden, extra, device=net.t1.weight.device)], dim=1)})
     return out
+
+
+def add_memory(net: PolicyNet) -> PolicyNet:
+    return widen_inputs(net, MEM_DIM)
 
 
 if __name__ == "__main__":

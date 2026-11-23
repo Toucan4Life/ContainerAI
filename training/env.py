@@ -9,9 +9,27 @@ from pathlib import Path
 import numpy as np
 
 RANDOM, SIMPLE, MERCHANT, TRADER, DISCOUNTER, BARGAIN, SOLITAIRE = -1, -2, -3, -4, -5, -6, -7
+PRODUCER, SHOWCASE, SHIPPER = -8, -9, -10
 MAX_PLAYERS = 5
-INTERACTION = 16  # columns of `BatchEnv.interaction`, see `crates/container-env`
+INTERACTION = 92  # columns of `BatchEnv.interaction`, see `crates/container-env`
 (BOUGHT, SPENT, SOLD, EARNED, BIDS, BID_MONEY, REAL_BIDS, PLACED_AT) = range(8)  # PLACED_AT..PLACED_AT+5: laid out in a $1..$6 lot
+# Strategy diagnostics (`training/strategy_metrics.py` has the formulas); the colour blocks have five columns each.
+(MAIN_DECISIONS, PRODUCE_CHANCES, PRODUCES, PRODUCED, OFFERED, OFFERED_COMPETITIVE, COMPETITIVE_COLORS) = range(13, 20)
+BOUGHT_COLOR, SOLD_COLOR = 20, 25
+DELIVERIES, SHIPPED, SUBSIDY = 30, 31, 32
+# Per delivery bid, summed: the bidder's allowance for the cargo (its value on the bidder's scoring card, $5 at least), and the money bid above that.
+BID_VALUE, OVERBID = 33, 34
+# Trips to the Island by cargo of 1..5 containers (CARGO_SIZE..+5), the deliverer's cash for accepted deliveries of each size (CARGO_CASH..+5,
+# twice the winning bid), distinct colours of all cargoes; summed over Main decisions: factories, warehouses owned, harbor containers laid out;
+# builds made by the build script.
+CARGO_SIZE, CARGO_CASH, CARGO_COLORS = 35, 40, 45
+FACTORIES_HELD, WAREHOUSES_HELD, HARBOR_OFFERED, SCRIPT_BUILDS = 46, 47, 48, 49
+# Per delivery bid: the bidder's cash before it bids; in the deliverer's row, the rivals' bids and how many could afford $3 and $10.
+BID_CASH, RIVAL_BIDS, RIVAL_CASH_3, RIVAL_CASH_10 = 50, 51, 52, 53
+# Cash flows for the ledger (`training/ledger.py`): delivery auctions the seat won as bidder and what it paid, what it paid the Bank to buy
+# its own cargo out, and the interest due when its turns begin ($1 per loan held; unpaid only in a default, which seizes containers).
+DEALS_WON, DEAL_PAID, BUYOUT_PAID, INTEREST = 54, 55, 56, 57
+MOVES = 58  # from here, one counter per kind of move (`move_names`): every action the seat plays, in any phase
 IDLE, PENDING, DONE, STALLED = 0, 1, 2, 3
 SHORT, STANDARD, EXTENDED = 0, 1, 2
 LENGTH_NAMES = {SHORT: "short", STANDARD: "standard", EXTENDED: "extended"}
@@ -35,6 +53,26 @@ def _ptr(a: np.ndarray, ctype):
     return a.ctypes.data_as(C.POINTER(ctype))
 
 
+def _check_width(lib) -> None:
+    """The library fills `INTERACTION` columns per seat; another width means it is stale and would misalign the rows."""
+    try:
+        lib.cenv_interaction_width.restype = C.c_size_t
+        width = lib.cenv_interaction_width()
+    except AttributeError:
+        width = None
+    if width != INTERACTION:
+        raise RuntimeError(f"libcontainer_env.so has {width} interaction columns, not {INTERACTION}: "
+                           "rebuild it with `cargo build --release -p container-env`")
+
+
+def move_names() -> list[str]:
+    """The kinds of move counted by the columns of `BatchEnv.interaction` from `MOVES` on, in column order."""
+    lib = C.CDLL(str(find_library()))
+    _check_width(lib)
+    lib.cenv_move_names.restype = C.c_char_p
+    return lib.cenv_move_names().decode().rstrip(",").split(",")
+
+
 def _buffer(shape, dtype, pinned: bool) -> np.ndarray:
     """A zeroed array; pinned host memory makes the copies to the GPU faster."""
     if pinned:
@@ -49,6 +87,7 @@ class BatchEnv:
 
     def __init__(self, n: int, threads: int = 8, pinned: bool = False):
         lib = C.CDLL(str(find_library()))
+        _check_width(lib)
         lib.cenv_new.restype = C.c_void_p
         lib.cenv_new.argtypes = [C.c_size_t, C.c_size_t]
         for name in ("cenv_free", "cenv_advance"):
@@ -73,7 +112,12 @@ class BatchEnv:
         lib.cenv_require_harbor_purchase.argtypes = [C.c_void_p, C.c_int]
         lib.cenv_forbid_double_reprice.argtypes = [C.c_void_p, C.c_int]
         lib.cenv_require_bank_load.argtypes = [C.c_void_p, C.c_int]
+        lib.cenv_require_bid_within_value.argtypes = [C.c_void_p, C.c_int]
+        lib.cenv_set_build_script.argtypes = [C.c_void_p, C.c_int, C.c_int, C.c_int, C.c_int, C.c_uint32]
+        lib.cenv_set_value_bidder.argtypes = [C.c_void_p, C.c_int, C.c_uint32, C.c_uint32]
+        lib.cenv_set_min_cargo.argtypes = [C.c_void_p, C.c_int, C.c_uint32]
         lib.cenv_mirror_rules.argtypes = [C.c_void_p, C.c_int, C.c_int]
+        lib.cenv_mirror_rules_set.argtypes = [C.c_void_p, C.c_uint32, C.c_int]
         lib.cenv_forbid_same_turn_repay.argtypes = [C.c_void_p, C.c_int]
         lib.cenv_step.argtypes = [C.c_void_p, C.POINTER(C.c_int)]
         lib.cenv_teacher.argtypes = [C.c_void_p, C.POINTER(C.c_int)]
@@ -139,6 +183,10 @@ class BatchEnv:
         """Seats of `slot` play under the rules that bind `like` (a frozen copy of a net trained under them)."""
         self.lib.cenv_mirror_rules(self.handle, slot, like)
 
+    def mirror_rules_set(self, mask: int, like: int) -> None:
+        """Net slots `SLOT_BASE + k` with bit `k` in `mask` play under the rules that bind `like`."""
+        self.lib.cenv_mirror_rules_set(self.handle, mask, like)
+
     def require_min_bid(self, slot: int, amount: int) -> None:
         """Seats of this slot open a delivery auction with at least `amount` (their whole cash if less)."""
         self.lib.cenv_set_min_bid(self.handle, slot, amount)
@@ -146,6 +194,26 @@ class BatchEnv:
     def require_max_price(self, slot: int, amount: int) -> None:
         """Seats of this slot lay no container out in a lot that costs more than `amount`."""
         self.lib.cenv_set_max_price(self.handle, slot, amount)
+
+    def require_bid_within_value(self, slot: int) -> None:
+        """Seats of this slot never have more on the table in a delivery auction than the cargo is worth on their scoring card ($5 at least)."""
+        self.lib.cenv_require_bid_within_value(self.handle, slot)
+
+    def build_script(self, slot: int, warehouse: bool = False, count: int = 1, after_main: int = 0, reserve: int = 5) -> None:
+        """Investment probe: seats of this slot build `count` factories (or warehouses) at their first Main decision after `after_main`
+        of their own where the build is legal and leaves `reserve` cash; the net plays everything else. A negative slot lifts it."""
+        self.lib.cenv_set_build_script(self.handle, slot, int(warehouse), count, after_main, reserve)
+
+    def value_bidders(self, except_slot: int, percent: int, lend: bool = False) -> None:
+        """Probe: every seat except those of `except_slot` bids for deliveries by `percent` of the cargo's value on its own card (0 lifts it).
+
+        With `lend`, a bidder that lacks the cash for its bid is lent the difference until the auction is settled.
+        """
+        self.lib.cenv_set_value_bidder(self.handle, except_slot, percent, int(lend))
+
+    def require_min_cargo(self, slot: int, containers: int) -> None:
+        """Probe: seats of this slot do not sail to the Island with fewer containers on the ship (waived if nothing else is legal)."""
+        self.lib.cenv_set_min_cargo(self.handle, slot, containers)
 
     def forbid_same_turn_repay(self, slot: int) -> None:
         """Seats of this slot may not repay a loan in a turn in which they requested one."""

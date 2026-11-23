@@ -9,3 +9,4 @@
 {"time": "2026-11-12 11:48:11", "command": "br eval", "profile": "magnate", "seeds": 100, "offset": 1600, "candidates": [], "out": "reports/psro/final_br/holdout_final_magnate"}
 {"time": "2026-11-12 11:52:14", "command": "br eval", "profile": "@reports/psro/final_br/metagame_profile.json", "seeds": 150, "offset": 1400, "candidates": [], "out": "reports/psro/final_br/holdout_final_sigma"}
 {"time": "2026-11-12 12:02:41", "command": "br eval", "profile": "magnate", "seeds": 100, "offset": 1600, "candidates": [], "out": "reports/psro/final_br/holdout_final_magnate"}
+{"time": "2026-11-22 09:58:53", "command": "adaptive_eval run", "net": "runs/strategist/adaptive_s1/final.pt", "sha256": "13e277cbd2cd14d61af6a5d7582120a88539fb74486a4531f2fe0e0bf0e2512a", "seeds": 400, "sizes": [3, 4, 5], "out": "runs/strategist/adaptive_holdout"}

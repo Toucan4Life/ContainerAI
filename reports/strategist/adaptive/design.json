@@ -1,0 +1,1 @@
+{"net": "runs/strategist/adaptive_s1/final.pt", "seeds": 400, "block": "holdout", "sizes": [3, 4, 5]}

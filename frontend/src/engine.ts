@@ -168,6 +168,14 @@ export async function getOpponents(): Promise<OpponentInfo[]> {
   return JSON.parse(listOpponents());
 }
 
+let botNames: Map<string, string> | null = null;
+
+/** The name a bot goes by in the menu, or its id if the engine does not list it. Call once the engine is loaded. */
+export function botName(kind: string): string {
+  botNames ??= new Map((JSON.parse(listOpponents()) as OpponentInfo[]).map((o) => [o.id, o.name]));
+  return botNames.get(kind) ?? kind;
+}
+
 /** A game running in the Rust engine. */
 export class GameClient {
   private game: Game;

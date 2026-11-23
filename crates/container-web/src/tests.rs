@@ -57,6 +57,23 @@ fn consortium_plays_a_whole_game_in_a_session() {
 }
 
 #[test]
+fn the_heuristics_play_a_whole_game_in_a_session() {
+    for kinds in [
+        &["producer", "showcase", "shipper"][..],
+        &["shipper", "merchant", "producer", "simple"],
+        &["showcase", "producer", "shipper", "showcase", "consortium"],
+    ] {
+        let mut session = Session::new(&config(kinds, 5)).unwrap();
+        let mut steps = 0;
+        while session.step().unwrap() {
+            steps += 1;
+            assert!(steps < 20_000, "the game must end");
+        }
+        assert_eq!(session.snapshot()["gameOver"], true);
+    }
+}
+
+#[test]
 fn a_human_gets_legal_actions_only_on_their_own_turn() {
     let mut session = Session::new(&config(&["human", "simple", "simple"], 7)).unwrap();
     let mut human_moves = 0;

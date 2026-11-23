@@ -1,6 +1,6 @@
 //! Final scoring cards and end-of-game scoring.
 
-use crate::color::{Color, NUM_COLORS};
+use crate::color::{Color, ColorCounts, NUM_COLORS};
 use crate::state::{PlayerId, PlayerState, State};
 
 /// Cash lost per outstanding loan at the end of the game: $10 repaid plus $1 interest.
@@ -42,6 +42,15 @@ impl ScoringCard {
             3 => 4,
             _ => 2,
         }
+    }
+
+    /// What `cargo` is worth at the values of this card: every container with a full set of colors and none
+    /// discarded, whatever island the cargo would join.
+    pub fn cargo_value(self, cargo: &ColorCounts) -> u32 {
+        Color::ALL
+            .into_iter()
+            .map(|c| u32::from(cargo[c]) * self.value_of(c, true))
+            .sum()
     }
 }
 

@@ -196,7 +196,7 @@ fn a_net_under_the_table_rules_keeps_them() {
 
 #[test]
 fn the_peddlers_keep_the_table_rules_at_every_table() {
-    for id in ["peddler", "peddler2"] {
+    for id in ["peddler", "peddler2", "adaptive"] {
         let (mut harbor_trips, mut bank_trips) = (0, 0);
         for config in every_table() {
             let (harbor, bank) = table_rule_trips(id, config);
@@ -414,4 +414,81 @@ fn the_cheap_seller_archetypes_play_to_the_end_and_price_low() {
         game.apply(action).expect("legal");
     }
     assert!(priced > 0 && cheapest * 10 >= priced * 9, "{cheapest} of {priced} at $1");
+}
+
+#[test]
+fn the_heuristics_are_listed_as_opponents_and_can_be_created() {
+    use crate::HEURISTICS;
+    for id in HEURISTICS {
+        assert!(create(id, 0).is_some(), "{id}");
+        assert!(
+            OPPONENTS.iter().any(|o| o.id == id),
+            "{id} is not listed for the UI"
+        );
+    }
+}
+
+#[test]
+fn the_price_variants_change_only_the_lots_and_the_null_ones_are_the_base() {
+    use crate::archetype::{Archetype, VARIANTS, variant};
+    assert_eq!(format!("{:?}", variant(0, 7).unwrap()), format!("{:?}", Archetype::producer(7)));
+    assert_eq!(format!("{:?}", variant(5, 7).unwrap()), format!("{:?}", Archetype::showcase(7)));
+    assert!(variant(VARIANTS.len(), 7).is_none());
+    let shifted = format!("{:?}", variant(1, 7).unwrap());
+    let base = format!("{:?}", Archetype::producer(7));
+    assert_ne!(shifted, base);
+    assert_eq!(shifted.replace("factory_lot: 1", "factory_lot: 0"), base);
+}
+
+#[test]
+fn the_heuristics_play_every_kind_of_game_to_its_end_alone_and_among_merchants() {
+    use crate::HEURISTICS;
+    for id in HEURISTICS {
+        for config in every_table() {
+            for ids in [&[id][..], &[id, "merchant"][..]] {
+                let Played { game, trace } = play(config, ids);
+                assert!(game.is_terminal(), "{ids:?}: {config:?} stalled after {} actions", trace.len());
+            }
+        }
+    }
+}
+
+#[test]
+fn each_heuristic_does_what_it_is_for_with_the_same_chances() {
+    use crate::HEURISTICS;
+    use container_engine::observation::PhaseView;
+    use container_engine::phase::Phase;
+    // Per heuristic: produce actions, purchases from factories, deliveries made (sold or bought out).
+    let mut made = [[0u32; 3]; 3];
+    for seed in 0..40 {
+        for shift in 0..3 {
+            let kind = |seat: usize| (seat + shift) % 3;
+            let mut game = Game::new(config(3, GameLength::Standard, seed)).expect("game");
+            let mut seats: Vec<_> = (0..3)
+                .map(|s| create(HEURISTICS[kind(s)], seed * 10 + s as u64).expect("bot"))
+                .collect();
+            // The horizon of the EGTA runs: a table that stalls is cut off rather than played forever.
+            for _ in 0..2500 {
+                if game.is_terminal() {
+                    break;
+                }
+                let viewer = game.current_player();
+                let obs = game.observation(viewer).expect("seat");
+                let action = seats[viewer].choose(&obs, &game.legal_actions());
+                match (obs.phase, action) {
+                    (PhaseView::Open(Phase::Main), Action::Produce) => made[kind(viewer)][0] += 1,
+                    (PhaseView::Open(Phase::Main), Action::FactoryPurchase(_)) => made[kind(viewer)][1] += 1,
+                    (PhaseView::Open(Phase::Decide(_)), Action::Accept(_) | Action::BuyOut) => {
+                        made[kind(viewer)][2] += 1
+                    }
+                    _ => {}
+                }
+                game.apply(action).expect("legal");
+            }
+        }
+    }
+    let [producer, showcase, shipper] = made;
+    assert!(producer[0] > showcase[0] && producer[0] > shipper[0], "producing: {made:?}");
+    assert!(showcase[1] > producer[1] && showcase[1] > shipper[1], "restocking: {made:?}");
+    assert!(shipper[2] > producer[2] && shipper[2] > showcase[2], "delivering: {made:?}");
 }

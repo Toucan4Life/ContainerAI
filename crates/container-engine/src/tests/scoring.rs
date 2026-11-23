@@ -182,6 +182,40 @@ fn discarded_two_value_color_scores_nothing() {
 }
 
 #[test]
+fn a_cargo_is_worth_every_container_at_the_values_of_the_card() {
+    let red = ScoringCard { ten: Red };
+    // $10 red, $10 blue (a full set is assumed), $6 yellow, $4 white, $2 green.
+    assert_eq!(red.cargo_value(&counts(1, 1, 1, 1, 1)), 10 + 10 + 6 + 4 + 2);
+    assert_eq!(
+        red.cargo_value(&counts(3, 0, 0, 0, 0)),
+        30,
+        "the most common color is not discarded"
+    );
+    assert_eq!(
+        red.cargo_value(&counts(0, 2, 0, 0, 2)),
+        2 * 10 + 2 * 2,
+        "the two-value color counts at its full-set value"
+    );
+    assert_eq!(red.cargo_value(&ColorCounts::default()), 0);
+    assert_eq!(
+        ScoringCard { ten: Green }.cargo_value(&counts(1, 0, 0, 0, 0)),
+        10,
+        "the card decides which color is the dearest"
+    );
+}
+
+#[test]
+fn one_container_of_each_color_is_worth_the_same_on_every_card() {
+    for card in Color::ALL {
+        assert_eq!(
+            ScoringCard { ten: card }.cargo_value(&counts(1, 1, 1, 1, 1)),
+            10 + 10 + 6 + 4 + 2,
+            "{card:?} card"
+        );
+    }
+}
+
+#[test]
 fn leftover_containers_are_worth_by_location_not_color() {
     let mut p = player(Red, ColorCounts::default(), 0, 0);
     p.ship = counts(2, 1, 0, 0, 0);

@@ -1,0 +1,77 @@
+{
+  "archetype": "shipper",
+  "effect_threshold": 0.2,
+  "primary": "island_points",
+  "primary_pass": true,
+  "corroborated_by": [
+    "island_share",
+    "deliveries"
+  ],
+  "diverges": true,
+  "pathology": [
+    "deliveries that hurt the result"
+  ],
+  "win_floor_ok": false,
+  "metrics": {
+    "island_points": {
+      "metric": "island_points",
+      "base": 34.306666666666665,
+      "cand": 60.221666666666664,
+      "diff": 25.915,
+      "lo": 24.228125,
+      "hi": 27.6055,
+      "effect": 1.3693711932460202,
+      "effect_lo": 1.280235247592658
+    },
+    "island_share": {
+      "metric": "island_share",
+      "base": 0.37127249159595466,
+      "cand": 0.5794547603678443,
+      "diff": 0.20818226877188958,
+      "lo": 0.19809349074070046,
+      "hi": 0.21811443996932894,
+      "effect": 2.4713562801531603,
+      "effect_lo": 2.3515912055695503
+    },
+    "deliveries": {
+      "metric": "deliveries",
+      "base": 9.985833333333334,
+      "cand": 11.561666666666667,
+      "diff": 1.5758333333333334,
+      "lo": 1.4074791666666666,
+      "hi": 1.743375,
+      "effect": 0.6809338013893516,
+      "effect_lo": 0.6081862333165414
+    },
+    "win": {
+      "metric": "win",
+      "base": 0.48833333333333334,
+      "cand": 0.11208333333333333,
+      "diff": -0.37625,
+      "lo": -0.4083333333333333,
+      "hi": -0.34415625000000005,
+      "effect": -0.7533333127207291,
+      "effect_lo": -0.8175710370612564
+    },
+    "sell_through": {
+      "metric": "sell_through",
+      "base": 1.42343581019302,
+      "cand": 1.8983820384301224,
+      "diff": 0.47494622823710275,
+      "lo": 0.4210749371986807,
+      "hi": 0.5325918311929814,
+      "effect": 1.1013254764755698,
+      "effect_lo": 0.9764064398691235
+    },
+    "sold": {
+      "metric": "sold",
+      "base": 17.346666666666668,
+      "cand": 11.478333333333333,
+      "diff": -5.868333333333333,
+      "lo": -6.148354166666667,
+      "hi": -5.601645833333333,
+      "effect": -1.4457141768130728,
+      "effect_lo": -1.5146997073816064
+    }
+  }
+}

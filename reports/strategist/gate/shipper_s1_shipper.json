@@ -1,0 +1,76 @@
+{
+  "archetype": "shipper",
+  "effect_threshold": 0.2,
+  "primary": "island_points",
+  "primary_pass": true,
+  "corroborated_by": [
+    "island_share"
+  ],
+  "diverges": true,
+  "pathology": [
+    "deliveries that hurt the result"
+  ],
+  "win_floor_ok": false,
+  "metrics": {
+    "island_points": {
+      "metric": "island_points",
+      "base": 34.306666666666665,
+      "cand": 67.315,
+      "diff": 33.00833333333333,
+      "lo": 31.223291666666665,
+      "hi": 34.73033333333333,
+      "effect": 1.7441891106976288,
+      "effect_lo": 1.6498659527938202
+    },
+    "island_share": {
+      "metric": "island_share",
+      "base": 0.37127249159595466,
+      "cand": 0.4397025496238182,
+      "diff": 0.06843005802786366,
+      "lo": 0.05946564626646876,
+      "hi": 0.07716034698674434,
+      "effect": 0.812341294270885,
+      "effect_lo": 0.7059237043623174
+    },
+    "deliveries": {
+      "metric": "deliveries",
+      "base": 9.985833333333334,
+      "cand": 9.410833333333333,
+      "diff": -0.575,
+      "lo": -0.7291875,
+      "hi": -0.4158125000000001,
+      "effect": -0.2484634177465111,
+      "effect_lo": -0.31508942335310275
+    },
+    "win": {
+      "metric": "win",
+      "base": 0.48833333333333334,
+      "cand": 0.17458333333333334,
+      "diff": -0.31375,
+      "lo": -0.34708333333333335,
+      "hi": -0.28,
+      "effect": -0.6281948886807408,
+      "effect_lo": -0.694935381502068
+    },
+    "sell_through": {
+      "metric": "sell_through",
+      "base": 1.42343581019302,
+      "cand": 2.074610089439714,
+      "diff": 0.6511742792466939,
+      "lo": 0.594364496025295,
+      "hi": 0.7098959841939406,
+      "effect": 1.5099705623980295,
+      "effect_lo": 1.3782376253726893
+    },
+    "sold": {
+      "metric": "sold",
+      "base": 17.346666666666668,
+      "cand": 14.936666666666667,
+      "diff": -2.41,
+      "lo": -2.6984375,
+      "hi": -2.119979166666667,
+      "effect": -0.5937241407758318,
+      "effect_lo": -0.6647831892633955
+    }
+  }
+}

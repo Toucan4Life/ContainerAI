@@ -1,0 +1,375 @@
+{
+ "3": {
+  "sigma": [
+   0.04394179211480544,
+   0.26857205228821385,
+   0.6874861555969808
+  ],
+  "solver": "support_enumeration",
+  "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+  "is_nash": true,
+  "gain": 2.4341639814906557e-13,
+  "nash_conv": 7.302491944471967e-13,
+  "verified_gain": 2.433608869978343e-13,
+  "verify_method": "enumerate",
+  "entropy": 0.7479981468709218,
+  "bootstrap": {
+   "mean": 0.005825249182905834,
+   "p95": 0.013682567077077266,
+   "reps": 200
+  },
+  "value": 0.3206425114666826,
+  "values": {
+   "producer": 0.3206425114667777,
+   "showcase": 0.320642511466926,
+   "shipper": 0.3206425114665814
+  },
+  "solvers": [
+   {
+    "method": "replicator",
+    "concept": "Nash candidate (verified by gain)",
+    "gain": 2.2214278749821403e-09,
+    "nash_conv": 6.664283624946421e-09,
+    "support": [
+     "showcase"
+    ],
+    "entropy": 2.941974170201249e-07
+   },
+   {
+    "method": "regret_matching",
+    "concept": "CCE (coarse correlated equilibrium of the n-player game, via average regret); the average strategy's own Nash gain is NOT guaranteed small",
+    "gain": 6.27762034305368e-06,
+    "nash_conv": 1.883286102916104e-05,
+    "support": [
+     "showcase"
+    ],
+    "entropy": 0.0004000694391451867
+   },
+   {
+    "method": "nash_conv_minimizer",
+    "concept": "Nash candidate (verified by gain)",
+    "gain": 2.8976820942716586e-14,
+    "nash_conv": 8.693046282814976e-14,
+    "support": [
+     "showcase",
+     "shipper"
+    ],
+    "entropy": 0.6533540725169406
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 0.0,
+    "nash_conv": 0.0,
+    "support": [
+     "producer"
+    ],
+    "entropy": -0.0
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 0.0,
+    "nash_conv": 0.0,
+    "support": [
+     "showcase"
+    ],
+    "entropy": -0.0
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 1.283417816466681e-13,
+    "nash_conv": 3.850253449400043e-13,
+    "support": [
+     "showcase",
+     "shipper"
+    ],
+    "entropy": 0.653354072517313
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 4.037802314726946e-10,
+    "nash_conv": 1.2113406944180838e-09,
+    "support": [
+     "producer",
+     "showcase"
+    ],
+    "entropy": 0.45124148800218644
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 2.4341639814906557e-13,
+    "nash_conv": 7.302491944471967e-13,
+    "support": [
+     "producer",
+     "showcase",
+     "shipper"
+    ],
+    "entropy": 0.7479981468709218
+   }
+  ],
+  "accounting": {
+   "games": 12000,
+   "stalled": 196
+  }
+ },
+ "4": {
+  "sigma": [
+   0.36480353059941617,
+   0.36662985403754733,
+   0.26856661536303644
+  ],
+  "solver": "nash_conv_minimizer",
+  "concept": "Nash candidate (verified by gain)",
+  "is_nash": true,
+  "gain": 5.551115123125783e-17,
+  "nash_conv": 2.220446049250313e-16,
+  "verified_gain": 8.326672684688674e-17,
+  "verify_method": "enumerate",
+  "entropy": 1.0888166537688595,
+  "bootstrap": {
+   "mean": 0.0025090331112827403,
+   "p95": 0.005168533530315677,
+   "reps": 200
+  },
+  "value": 0.2499999685407793,
+  "values": {
+   "producer": 0.24999996854077935,
+   "showcase": 0.2499999685407793,
+   "shipper": 0.24999996854077927
+  },
+  "solvers": [
+   {
+    "method": "replicator",
+    "concept": "Nash candidate (verified by gain)",
+    "gain": 2.1042790288028357e-09,
+    "nash_conv": 8.417116115211343e-09,
+    "support": [
+     "shipper"
+    ],
+    "entropy": 3.850425815360118e-07
+   },
+   {
+    "method": "regret_matching",
+    "concept": "CCE (coarse correlated equilibrium of the n-player game, via average regret); the average strategy's own Nash gain is NOT guaranteed small",
+    "gain": 5.296703772139644e-06,
+    "nash_conv": 2.1186815088558575e-05,
+    "support": [
+     "shipper"
+    ],
+    "entropy": 0.0004000694391451867
+   },
+   {
+    "method": "nash_conv_minimizer",
+    "concept": "Nash candidate (verified by gain)",
+    "gain": 5.551115123125783e-17,
+    "nash_conv": 2.220446049250313e-16,
+    "support": [
+     "producer",
+     "showcase",
+     "shipper"
+    ],
+    "entropy": 1.0888166537688595
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 0.0,
+    "nash_conv": 0.0,
+    "support": [
+     "producer"
+    ],
+    "entropy": -0.0
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 0.0,
+    "nash_conv": 0.0,
+    "support": [
+     "showcase"
+    ],
+    "entropy": -0.0
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 0.0,
+    "nash_conv": 0.0,
+    "support": [
+     "shipper"
+    ],
+    "entropy": -0.0
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 5.0154325137441447e-14,
+    "nash_conv": 2.0061730054976579e-13,
+    "support": [
+     "showcase",
+     "shipper"
+    ],
+    "entropy": 0.37644803502147434
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 3.9374059568331177e-13,
+    "nash_conv": 1.574962382733247e-12,
+    "support": [
+     "producer",
+     "showcase"
+    ],
+    "entropy": 0.629763608565165
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 1.9756696278960817e-12,
+    "nash_conv": 7.902678511584327e-12,
+    "support": [
+     "producer",
+     "shipper"
+    ],
+    "entropy": 0.637034316101317
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 1.5571616218679196e-10,
+    "nash_conv": 6.228646487471678e-10,
+    "support": [
+     "producer",
+     "showcase",
+     "shipper"
+    ],
+    "entropy": 1.0888166534024681
+   }
+  ],
+  "accounting": {
+   "games": 24000,
+   "stalled": 0
+  }
+ },
+ "5": {
+  "sigma": [
+   0.6208323466313721,
+   0.28432360238111315,
+   0.09484405098751478
+  ],
+  "solver": "support_enumeration",
+  "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+  "is_nash": true,
+  "gain": 5.23192600354605e-13,
+  "nash_conv": 2.615963001773025e-12,
+  "verified_gain": 5.2297055574968e-13,
+  "verify_method": "enumerate",
+  "entropy": 0.876931739175003,
+  "bootstrap": {
+   "mean": 0.002096897958587273,
+   "p95": 0.005407458688848978,
+   "reps": 200
+  },
+  "value": 0.2000000052381177,
+  "values": {
+   "producer": 0.2000000052384018,
+   "showcase": 0.20000000523732273,
+   "shipper": 0.2000000052386409
+  },
+  "solvers": [
+   {
+    "method": "replicator",
+    "concept": "Nash candidate (verified by gain)",
+    "gain": 1.7078784497748245e-09,
+    "nash_conv": 8.539392248874123e-09,
+    "support": [
+     "shipper"
+    ],
+    "entropy": 1.968660543799955e-07
+   },
+   {
+    "method": "regret_matching",
+    "concept": "CCE (coarse correlated equilibrium of the n-player game, via average regret); the average strategy's own Nash gain is NOT guaranteed small",
+    "gain": 5.922702760757792e-06,
+    "nash_conv": 2.961351380378896e-05,
+    "support": [
+     "shipper"
+    ],
+    "entropy": 0.0004000694391451867
+   },
+   {
+    "method": "nash_conv_minimizer",
+    "concept": "Nash candidate (verified by gain)",
+    "gain": 3.497202527569243e-15,
+    "nash_conv": 1.7486012637846216e-14,
+    "support": [
+     "producer",
+     "showcase"
+    ],
+    "entropy": 0.19988446728763687
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 0.0,
+    "nash_conv": 0.0,
+    "support": [
+     "producer"
+    ],
+    "entropy": -0.0
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 0.0,
+    "nash_conv": 0.0,
+    "support": [
+     "shipper"
+    ],
+    "entropy": -0.0
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 1.0577094755603866e-12,
+    "nash_conv": 5.288547377801933e-12,
+    "support": [
+     "producer",
+     "showcase"
+    ],
+    "entropy": 0.20944026176658367
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 4.8802711871687166e-11,
+    "nash_conv": 2.4401355935843583e-10,
+    "support": [
+     "producer",
+     "showcase"
+    ],
+    "entropy": 0.20944891623611342
+   },
+   {
+    "method": "support_enumeration",
+    "concept": "Nash equilibrium (support enumeration, verified by gain <= 1e-07)",
+    "gain": 5.23192600354605e-13,
+    "nash_conv": 2.615963001773025e-12,
+    "support": [
+     "producer",
+     "showcase",
+     "shipper"
+    ],
+    "entropy": 0.876931739175003
+   }
+  ],
+  "accounting": {
+   "games": 42000,
+   "stalled": 0
+  }
+ }
+}

@@ -4,7 +4,7 @@
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }
 button { font: inherit; cursor: pointer; }
-.setup-page { min-height: 100vh; display: grid; place-items: center; padding: 48px 24px; background: radial-gradient(circle at 50% 35%, #232b42 0, #10131d 58%); }
+.setup-page { position: relative; min-height: 100vh; display: grid; place-items: center; padding: 48px 24px 68px; background: radial-gradient(circle at 50% 35%, #232b42 0, #10131d 58%); }
 .setup-brand, .brand { display: flex; align-items: center; gap: 10px; font: 600 14px "Space Grotesk"; letter-spacing: .16em; }
 .setup-brand { position: absolute; top: 34px; left: 44px; }
 .brand-mark { width: 31px; height: 31px; display: grid; place-items: center; color: #10131d; background: #f5b84b; border-radius: 9px; }
@@ -18,6 +18,8 @@ h1 em { color: #f5b84b; font-style: normal; }
 .setup-rule { height: 1px; background: #343c50; margin: 0 -42px 25px; }
 .seat-list { margin-top: 12px; }
 .seat-row { display: flex; align-items: center; gap: 11px; height: 49px; border-bottom: 1px solid #2c3345; }
+.seat-item { border-bottom: 1px solid #2c3345; }.seat-item > .seat-row { border-bottom: 0; }
+.seat-note { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; margin: -6px 0 11px 40px; overflow: hidden; color: #8a93a8; font-size: 12px; line-height: 1.4; }
 .avatar { width: 29px; height: 29px; display: inline-grid; flex: 0 0 auto; place-items: center; color: #fff; border-radius: 9px; font: 600 12px "Space Grotesk"; }
 .avatar-you { background: #e86f51; }.avatar-bot { background: #526282; }
 .seat-row strong { font-size: 14px; }.seat-tag { margin-left: auto; color: #778198; font: 10px "DM Mono"; }
@@ -260,8 +262,8 @@ h1 em { color: #f5b84b; font-style: normal; }
   .player-stats { margin-top: 8px; }
   .game-layout .board-area { padding: 12px; min-height: 0; overflow: hidden; display: block; }
   .table { height: 100%; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: auto minmax(0, 1fr); gap: 10px; }
-  .table-seats, .table-middle, .table-waters { display: contents; }
-  .table-seats > .harbor { grid-row: 1; }
+  .table-middle, .table-waters { display: contents; }
+  .table-seats { display: grid; grid-row: 1; grid-column: 1 / -1; grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 10px; min-height: 0; }
   .table > .harbor-mine { grid-row: 2; grid-column: 1; }
   .table-waters > .zone-island { grid-row: 2; grid-column: 2; }
   .table-waters > .zone-ocean { grid-row: 2; grid-column: 3; }

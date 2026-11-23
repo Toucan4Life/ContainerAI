@@ -1,6 +1,10 @@
 import numpy as np
+import pytest
 
-from training.env import DONE, MERCHANT, PENDING, RANDOM, SIMPLE, SOLITAIRE, BatchEnv, win_fraction
+from training import env as env_module
+from training.env import (BID_MONEY, BID_VALUE, BIDS, DELIVERIES, DONE, INTERACTION, MERCHANT, MOVES, OVERBID, PENDING,
+                          PRODUCES, RANDOM, SHIPPED, SIMPLE, SOLITAIRE, BatchEnv, move_names, win_fraction)
+from training.move_table import bid_summary, delivery_summary, harbor_gap
 
 
 def play_scripted(n=16, players=4, kinds=(MERCHANT, SIMPLE, RANDOM, SIMPLE), seed=1):
@@ -23,6 +27,53 @@ def test_solitaire_seats_finish_their_games():
     env = play_scripted(players=3, kinds=(SOLITAIRE, SOLITAIRE, MERCHANT))
     status, _, _ = env.results()
     assert (status == DONE).all()
+
+
+def test_the_move_counters_name_every_column_and_add_up_to_the_actions():
+    env = play_scripted(players=4, kinds=(MERCHANT, MERCHANT, SIMPLE, SIMPLE))
+    names = move_names()
+    assert len(names) == INTERACTION - MOVES and len(set(names)) == len(names)
+    inter = env.interaction()
+    actions = env.results_ex()[4]
+    assert (inter[:, :, MOVES:].sum(axis=(1, 2)) == actions).all(), "scripted seats and forced moves count too"
+    column = {name: MOVES + k for k, name in enumerate(names)}
+    assert inter[:, :, column["produce"]].sum() > 0
+    assert (inter[:, :, column["produce"]] == inter[:, :, PRODUCES]).all()
+    assert (inter[:, :, column["sail_island"]] == inter[:, :, DELIVERIES]).all()
+
+
+def test_a_library_with_another_counter_width_is_refused(monkeypatch):
+    monkeypatch.setattr(env_module, "INTERACTION", INTERACTION + 1)
+    with pytest.raises(RuntimeError, match="rebuild"):
+        BatchEnv(1)
+
+
+def test_the_harbor_gap_lists_the_nets_bound_by_the_rule_that_sailed_without_buying():
+    def row(sails, taken):
+        return 0.0, {}, {"sail_harbor": sails, "buy_harbor": taken}, {}, {}
+
+    rows = {"even": row(100, 100), "short": row(100, 90), "unbound": row(100, 70)}
+    bound = {"buy_at_harbor": 1}
+    nets = {"even": ("e.pt", bound), "short": ("s.pt", bound), "unbound": ("u.pt", {})}
+    text = harbor_gap(rows, nets)
+    assert "short 10 of 100 (10.0%)" in text and "unbound 30" not in text and "zero for the other 1" in text
+    assert "none" in harbor_gap({"even": rows["even"]}, nets)
+
+
+def test_the_bid_summary_compares_bids_with_the_value_of_the_cargo_and_survives_no_bids():
+    rows = np.zeros((2, INTERACTION), dtype=np.int32)
+    rows[0, [BIDS, BID_MONEY, BID_VALUE, OVERBID]] = [3, 12, 6, 6]
+    rows[1, [BIDS, BID_MONEY, BID_VALUE, OVERBID]] = [1, 0, 6, 0]
+    assert bid_summary(rows) == {"per_game": 2.0, "bid": 3.0, "value": 3.0, "over": 0.5}
+    assert bid_summary(np.zeros((1, INTERACTION), dtype=np.int32)) == {"per_game": 0.0, "bid": 0.0, "value": 0.0, "over": 0.0}
+
+
+def test_the_delivery_summary_is_the_cargo_per_sail_to_the_island_and_survives_no_deliveries():
+    rows = np.zeros((2, INTERACTION), dtype=np.int32)
+    rows[0, [DELIVERIES, SHIPPED]] = [3, 5]
+    rows[1, [DELIVERIES, SHIPPED]] = [1, 3]
+    assert delivery_summary(rows) == {"per_game": 2.0, "cargo": 2.0}
+    assert delivery_summary(np.zeros((1, INTERACTION), dtype=np.int32)) == {"per_game": 0.0, "cargo": 0.0}
 
 
 def test_slots_get_decisions_and_can_finish_a_game():

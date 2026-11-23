@@ -1,0 +1,86 @@
+{
+  "archetype": "showcase",
+  "effect_threshold": 0.2,
+  "primary": "colors_taken",
+  "primary_pass": true,
+  "corroborated_by": [
+    "competitive_colors"
+  ],
+  "diverges": true,
+  "pathology": [
+    "variety without purchases"
+  ],
+  "win_floor_ok": true,
+  "metrics": {
+    "colors_taken": {
+      "metric": "colors_taken",
+      "base": 3.7841666666666667,
+      "cand": 4.1425,
+      "diff": 0.35833333333333334,
+      "lo": 0.30747916666666664,
+      "hi": 0.4091666666666667,
+      "effect": 0.518516933643365,
+      "effect_lo": 0.4449297339326991
+    },
+    "competitive_colors": {
+      "metric": "competitive_colors",
+      "base": 1.2210707487260974,
+      "cand": 1.435998376608019,
+      "diff": 0.21492762788192163,
+      "lo": 0.18616417973212873,
+      "hi": 0.2468425964099551,
+      "effect": 0.6169424551676689,
+      "effect_lo": 0.5343779542912611
+    },
+    "purchase_colors": {
+      "metric": "purchase_colors",
+      "base": 4.0375,
+      "cand": 3.8475,
+      "diff": -0.19,
+      "lo": -0.2366875,
+      "hi": -0.14414583333333345,
+      "effect": -0.3071072659052626,
+      "effect_lo": -0.3825707947313255
+    },
+    "sold": {
+      "metric": "sold",
+      "base": 17.346666666666668,
+      "cand": 16.715833333333332,
+      "diff": -0.6308333333333334,
+      "lo": -0.9275625,
+      "hi": -0.3566666666666667,
+      "effect": -0.15541119452534738,
+      "effect_lo": -0.228512966111362
+    },
+    "win": {
+      "metric": "win",
+      "base": 0.48833333333333334,
+      "cand": 0.5579166666666666,
+      "diff": 0.06958333333333333,
+      "lo": 0.03457291666666667,
+      "hi": 0.10375,
+      "effect": 0.13932077876452023,
+      "effect_lo": 0.06922240489812016
+    },
+    "sell_through": {
+      "metric": "sell_through",
+      "base": 1.42343581019302,
+      "cand": 1.222511481114677,
+      "diff": -0.2009243290783432,
+      "lo": -0.23134538608882688,
+      "hi": -0.17051022216880996,
+      "effect": -0.4659118639158274,
+      "effect_lo": -0.5364535023478644
+    },
+    "deliveries": {
+      "metric": "deliveries",
+      "base": 9.985833333333334,
+      "cand": 8.248333333333333,
+      "diff": -1.7375,
+      "lo": -1.8892083333333334,
+      "hi": -1.592479166666667,
+      "effect": -0.7507916318861967,
+      "effect_lo": -0.8163463640612001
+    }
+  }
+}
