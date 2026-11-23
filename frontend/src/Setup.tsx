@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ArrowRight, Bot, CircleHelp, Plus, Ship, Sparkles, X } from "lucide-react";
-import { GameConfig, OpponentInfo, getOpponents } from "./engine";
+import { GameConfig, OpponentInfo, ensureNets, getOpponents } from "./engine";
 import { seatColor } from "./ui";
 
 const BOT_NAMES = ["Mara", "Otto", "Ines", "Kofi"];
@@ -22,7 +22,7 @@ const LENGTHS: { id: GameConfig["length"]; label: string }[] = [
   { id: "extended", label: "Extended" },
 ];
 
-type Props = { onStart: (config: GameConfig) => void; onHelp: () => void; error: string | null };
+type Props = { onStart: (config: GameConfig) => Promise<void>; onHelp: () => void; error: string | null };
 
 export default function Setup({ onStart, onHelp, error }: Props) {
   const [opponents, setOpponents] = useState<OpponentInfo[] | null>(null);
@@ -31,6 +31,7 @@ export default function Setup({ onStart, onHelp, error }: Props) {
   const [kinds, setKinds] = useState<string[]>([DEFAULT_OPPONENT, DEFAULT_OPPONENT]);
   const [length, setLength] = useState<GameConfig["length"]>("standard");
   const [seed, setSeed] = useState("");
+  const [starting, setStarting] = useState(false);
 
   useEffect(() => {
     getOpponents().then(
@@ -39,20 +40,29 @@ export default function Setup({ onStart, onHelp, error }: Props) {
     );
   }, []);
 
-  const start = () => {
+  const start = async () => {
     const parsed = Number.parseInt(seed, 10);
-    onStart({
-      seed: Number.isFinite(parsed) && parsed >= 0 ? parsed : Math.floor(Math.random() * 2 ** 32),
-      length,
-      players: [
-        { name: name.trim() || "You", kind: "human" },
-        ...kinds.map((kind, i) => ({ name: BOT_NAMES[i], kind })),
-      ],
-    });
+    setStarting(true);
+    try {
+      await onStart({
+        seed: Number.isFinite(parsed) && parsed >= 0 ? parsed : Math.floor(Math.random() * 2 ** 32),
+        length,
+        players: [
+          { name: name.trim() || "You", kind: "human" },
+          ...kinds.map((kind, i) => ({ name: BOT_NAMES[i], kind })),
+        ],
+      });
+    } finally {
+      setStarting(false);
+    }
   };
 
-  const setKind = (index: number, kind: string) =>
+  const setKind = (index: number, kind: string) => {
+    // Fetch the opponent's net now, so that starting the game does not wait for it. A failure is
+    // reported when the game starts.
+    ensureNets([kind]).catch(() => {});
     setKinds((current) => current.map((k, i) => (i === index ? kind : k)));
+  };
 
   return (
     <main className="setup-page">
@@ -94,7 +104,7 @@ export default function Setup({ onStart, onHelp, error }: Props) {
                   aria-label={`Opponent ${BOT_NAMES[index]}`}
                   aria-describedby={`seat-note-${index}`}
                 >
-                  {(opponents ?? [{ id: kind, name: kind, description: "", elo: 0 }]).map((o) => (
+                  {(opponents ?? [{ id: kind, name: kind, description: "", elo: 0, net: null }]).map((o) => (
                     <option key={o.id} value={o.id}>{o.name} · ELO {o.elo}</option>
                   ))}
                 </select>
@@ -151,8 +161,8 @@ export default function Setup({ onStart, onHelp, error }: Props) {
         </div>
 
         {(error || loadError) && <p className="error-text">{error ?? loadError}</p>}
-        <button className="primary-button" onClick={start} disabled={!opponents}>
-          {opponents ? "Set sail" : "Loading engine…"} <ArrowRight size={18} />
+        <button className="primary-button" onClick={start} disabled={!opponents || starting}>
+          {!opponents ? "Loading engine…" : starting ? "Loading opponent…" : "Set sail"} <ArrowRight size={18} />
         </button>
       </section>
       <button className="setup-footer" onClick={onHelp}>

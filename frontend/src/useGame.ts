@@ -16,10 +16,11 @@ export function useGame() {
     if (client.current) setSnap(client.current.snapshot());
   }, []);
 
-  const start = useCallback((config: GameConfig) => {
+  const start = useCallback(async (config: GameConfig) => {
     client.current?.dispose();
+    client.current = null;
     try {
-      client.current = new GameClient(config);
+      client.current = await GameClient.create(config);
       setError(null);
       setSnap(client.current.snapshot());
     } catch (e) {

@@ -1,4 +1,4 @@
-import init, { Game, opponents as listOpponents } from "./wasm/container_web.js";
+import init, { Game, load_net, opponents as listOpponents } from "./wasm/container_web.js";
 
 export type Counts = [number, number, number, number, number];
 export type District = "factory" | "harbor";
@@ -145,7 +145,7 @@ export type Snapshot = {
   results: { scores: Score[]; winners: number[] } | null;
 };
 
-export type OpponentInfo = { id: string; name: string; description: string; elo: number };
+export type OpponentInfo = { id: string; name: string; description: string; elo: number; net: string | null };
 
 export type SeatConfig = { name: string; kind: string };
 
@@ -163,25 +163,70 @@ export function loadEngine(): Promise<unknown> {
   return ready;
 }
 
+let opponentList: OpponentInfo[] | null = null;
+
+/** Every opponent the engine lists. Call once the engine is loaded. */
+function opponents(): OpponentInfo[] {
+  opponentList ??= JSON.parse(listOpponents()) as OpponentInfo[];
+  return opponentList;
+}
+
 export async function getOpponents(): Promise<OpponentInfo[]> {
   await loadEngine();
-  return JSON.parse(listOpponents());
+  return opponents();
 }
 
 let botNames: Map<string, string> | null = null;
 
 /** The name a bot goes by in the menu, or its id if the engine does not list it. Call once the engine is loaded. */
 export function botName(kind: string): string {
-  botNames ??= new Map((JSON.parse(listOpponents()) as OpponentInfo[]).map((o) => [o.id, o.name]));
+  botNames ??= new Map(opponents().map((o) => [o.id, o.name]));
   return botNames.get(kind) ?? kind;
+}
+
+// The engine holds no net. Each one is a file of the build, which build-wasm.sh copies, and it is
+// fetched when a game seats an opponent that plays it.
+const netFiles = import.meta.glob<string>("./wasm/nets/*.bin", { query: "?url", import: "default", eager: true });
+const netLoads = new Map<string, Promise<void>>();
+
+async function fetchNet(name: string) {
+  const url = netFiles[`./wasm/nets/${name}.bin`];
+  if (!url) throw new Error(`The net ${name} is not part of this build.`);
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Could not load the net ${name} (HTTP ${response.status}).`);
+  load_net(name, new Uint8Array(await response.arrayBuffer()));
+}
+
+/** Loads, once, the nets that the opponents of these kinds play with. */
+export async function ensureNets(kinds: string[]): Promise<void> {
+  await loadEngine();
+  const names = new Set(opponents().flatMap((o) => (o.net && kinds.includes(o.id) ? [o.net] : [])));
+  await Promise.all(
+    [...names].map((name) => {
+      let load = netLoads.get(name);
+      if (!load) {
+        load = fetchNet(name);
+        netLoads.set(name, load);
+        // A failed load is tried again the next time.
+        load.catch(() => netLoads.delete(name));
+      }
+      return load;
+    }),
+  );
 }
 
 /** A game running in the Rust engine. */
 export class GameClient {
   private game: Game;
 
-  constructor(config: GameConfig) {
+  private constructor(config: GameConfig) {
     this.game = new Game(JSON.stringify(config));
+  }
+
+  /** Starts a game, once the nets that its opponents play with are loaded. */
+  static async create(config: GameConfig): Promise<GameClient> {
+    await ensureNets(config.players.map((p) => p.kind));
+    return new GameClient(config);
   }
 
   snapshot(): Snapshot {

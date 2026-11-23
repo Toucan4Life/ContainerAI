@@ -8,25 +8,17 @@
 //! buy there (and then buys), and it sails to the Bank only with a container to pick up and room for it.
 //! It also keeps Dealer's two rules: no same-turn loan repay, and a first bid of at least $3.
 
-use std::sync::{Arc, OnceLock};
-
-use crate::neural::{Net, Neural};
+use crate::neural::Neural;
+use crate::nets;
 
 pub const ID: &str = "peddler2";
+
+/// The net in [`nets`].
+pub const NET: &str = "peddler2";
 
 /// The least Peddler v2 bids in the first round of a delivery auction.
 const MIN_BID: u32 = 3;
 
-fn net() -> Arc<Net> {
-    static NET: OnceLock<Arc<Net>> = OnceLock::new();
-    NET.get_or_init(|| {
-        Arc::new(
-            Net::from_bytes(include_bytes!("../weights/peddler2.bin")).expect("the built-in weights are valid"),
-        )
-    })
-    .clone()
-}
-
 pub fn new(seed: u64) -> Neural {
-    Neural::new(net(), seed, 0.0).without_same_turn_repay().with_min_bid(MIN_BID).with_table_rules()
+    Neural::new(nets::get(NET), seed, 0.0).without_same_turn_repay().with_min_bid(MIN_BID).with_table_rules()
 }

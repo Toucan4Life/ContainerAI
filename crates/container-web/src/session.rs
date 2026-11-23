@@ -75,7 +75,10 @@ impl Session {
                 None
             } else {
                 let bot_seed = seed.wrapping_mul(31).wrapping_add(seat as u64 + 1);
-                Some(create(&kind, bot_seed).ok_or(format!("unknown opponent {kind}"))?)
+                Some(create(&kind, bot_seed).ok_or_else(|| match container_bots::missing_net(&kind) {
+                    Some(net) => format!("{kind} needs the net {net}, which is not loaded"),
+                    None => format!("unknown opponent {kind}"),
+                })?)
             };
             seats.push(Seat { name, kind, bot });
         }

@@ -63,7 +63,7 @@ cargo test -p container-engine
 
 ## Opponents
 
-The crate `crates/container-bots` holds the computer opponents. An opponent implements `Opponent::choose(&Observation, &[Action]) -> Action`, so it only sees what its seat sees. `OPPONENTS` lists the bots the engine can seat and the web API reports, and `create(id, seed)` builds one. The setup menu shows five of them, the ones named in `MENU_OPPONENTS` (`frontend/src/Setup.tsx`): Solitaire, Shipper, Showcase, Producer and **Banker**, which is the net `consortium` under the name of how it plays (see [Exporting a net to the web UI](#exporting-a-net-to-the-web-ui)). The others stay in `OPPONENTS`, so the API, the arena and the tests still reach them. Each menu entry has a one-line note under its picker and the full description as a tooltip. A seed gives the same choices every time. Every entry carries an `elo` rating, which the UI shows next to the name. The scripted bots' ratings come from `training/ladder.json`. Magnate is not on the ladder, so its rating is the result of `anchors rate` (see [Exporting a net to the web UI](#exporting-a-net-to-the-web-ui)). Opponents trained with PyTorch are added to the same list once they are rated.
+The crate `crates/container-bots` holds the computer opponents. An opponent implements `Opponent::choose(&Observation, &[Action]) -> Action`, so it only sees what its seat sees. `OPPONENTS` lists the bots the engine can seat and the web API reports, and `create(id, seed)` builds one. The setup menu shows five of them, the ones named in `MENU_OPPONENTS` (`frontend/src/Setup.tsx`): Solitaire, Shipper, Showcase, Producer and **Banker**, which is the net `consortium` under the name of how it plays (see [Exporting a net to the web UI](#exporting-a-net-to-the-web-ui)). The others stay in `OPPONENTS`, so the API, the arena and the tests still reach them (the web WASM only plays bots whose net it was given, see below). Each menu entry has a one-line note under its picker and the full description as a tooltip. A seed gives the same choices every time. Every entry carries an `elo` rating, which the UI shows next to the name. The scripted bots' ratings come from `training/ladder.json`. Magnate is not on the ladder, so its rating is the result of `anchors rate` (see [Exporting a net to the web UI](#exporting-a-net-to-the-web-ui)). Opponents trained with PyTorch are added to the same list once they are rated.
 
 | Id | Name | ELO | Plays |
 |---|---|---|---|
@@ -495,13 +495,16 @@ Steps for exporting any net (use `magnate.rs` as the template):
 2. Copy the weights the trainer wrote next to the checkpoint:
    `cp runs/<run>/weights.bin crates/container-bots/weights/<id>.bin` (it is byte-identical to
    `export_weights(final.pt)`).
-3. Add `crates/container-bots/src/<id>.rs` with `ID`, `WEIGHTS = include_bytes!(..)`, a `net()`
-   behind a `OnceLock` and a `new(seed)`. Declare the module in `lib.rs`, add an `OpponentInfo` to
+3. Add `crates/container-bots/src/<id>.rs` with `ID`, `NET` (the weights file stem), `nets::get(NET)`
+   for the net and a `new(seed)`. Declare the module in `lib.rs`, add its `include_bytes!` row to
+   `EMBEDDED` in `nets.rs`, add an `OpponentInfo` (with `net: Some(<id>::NET)`) to
    `OPPONENTS` and a branch to `create()`. `OPPONENTS` must stay in ascending `elo` order (a
    `container-web` test checks it).
 4. `cargo test -p container-bots -p container-web`. The Magnate tests are the template: it must beat
    Merchant at every game length and play a whole game inside a `Session` with other bots.
-5. `cd frontend && npm run wasm` (`npm run dev` and `npm run build` run it first). The setup
+5. Add the net's name to `nets=(...)` in `frontend/scripts/build-wasm.sh`, so the web UI ships the
+   weights as a separate file. Then `cd frontend && npm run wasm` (`npm run dev` and `npm run build`
+   run it first). The setup
    dropdown is filled from `opponents()` as "Name · ELO n", but only with the ids in
    `MENU_OPPONENTS` in `frontend/src/Setup.tsx`: add the id there with a one-line note (it is shown
    under the picker, and the `OPPONENTS` description is its tooltip), or the bot is available to
@@ -531,15 +534,23 @@ of the `anchors rate` protocol reproduces the Python shares. Plain greedy Rust a
 games) 0.546, 0.658, 0.656 and 0.999.
 
 Speed in the browser: in a Node run of the release WASM, one bot step took about 0.5 ms and whole
-games of 3-5 seats with Magnate took 0.2-0.6 s (340-1,200 steps). The weights are 1.5 MB of the
-1.8 MB bundle.
+games of 3-5 seats with Magnate took 0.2-0.6 s (340-1,200 steps). The weights are 1.5 MB each.
+
+**Nets and the web bundle.** Nets live in a registry (`crates/container-bots/src/nets.rs`). The
+`embedded-nets` feature of `container-bots` (on by default, so the arena, the trainer bridge and the
+tests need nothing) compiles all nine weight files in. `container-web` turns it off for the WASM build, so
+the WASM is about 0.34 MB (it was 13.9 MB). The nets the menu offers are copied by `build-wasm.sh` to
+`src/wasm/nets/` and fetched on demand: `GameClient.create` calls `ensureNets`, which downloads the net
+a bot needs (the setup screen starts the download when the opponent is picked) and hands it to the
+WASM's `load_net(name, bytes)`. Until then, `create` refuses that bot with "needs the net ...". Banker's
+`psro08.bin` is a 1.5 MB file in `dist/assets`, fetched only when someone picks Banker.
 
 **Consortium** (`crates/container-bots/src/consortium.rs`) is psro08, the last net of the population study
 (`weights/psro08.bin` is `training.model.export_weights` of `populations/psro/psro08.pt`). It plays the action it
 rates best with the repetition guard, the `guarded` mode the study measured, at every table size (spec section
 9.4 says why one net and not a mixture). The Rust bot and the Python net play the same games:
-`training/test_evalcore.py` checks the scores, lengths and winners of six games against the Rust arena. It
-takes the WASM bundle from about 1.8 MB to 3.3 MB. Its UI label is **2378**: Magnate's 2280 plus +98 [+91, +111]
+`training/test_evalcore.py` checks the scores, lengths and winners of six games against the Rust arena. Its
+weights are a separate 1.5 MB download in the web UI. Its UI label is **2378**: Magnate's 2280 plus +98 [+91, +111]
 from 6,000 Rust-arena games of Consortium against Magnate at 3-5 seats (seed 21, 2 stalled; a Bradley-Terry fit of
 winner share). The ladder protocol cannot show the difference (10,000 games, greedy and unguarded, rates psro08 2280.8 with 3%
 stalls, because the anchor field is saturated), so the label is a head-to-head figure on the ladder's scale, not a ladder rating.

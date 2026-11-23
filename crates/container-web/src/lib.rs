@@ -17,9 +17,16 @@ pub fn opponents() -> String {
 pub fn opponents_json() -> String {
     let list: Vec<_> = container_bots::OPPONENTS
         .iter()
-        .map(|o| serde_json::json!({ "id": o.id, "name": o.name, "description": o.description, "elo": o.elo }))
+        .map(|o| serde_json::json!({ "id": o.id, "name": o.name, "description": o.description, "elo": o.elo, "net": o.net }))
         .collect();
     serde_json::Value::Array(list).to_string()
+}
+
+/// Gives the engine the weights file of a net, so that the opponents that play it can be seated. The
+/// `net` of an entry of `opponents()` names what it needs. The engine holds no net of its own.
+#[wasm_bindgen]
+pub fn load_net(name: &str, bytes: &[u8]) -> Result<(), JsError> {
+    container_bots::nets::provide(name, bytes).map_err(|e| JsError::new(&e))
 }
 
 /// A game for the browser. Every method returns JSON text.

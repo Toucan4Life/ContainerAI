@@ -8,19 +8,19 @@
 //! identical input until it has tried the others (see [`Neural`]). Without that it froze about one
 //! game in thirty at a mixed table, and many more at tables with Random.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use crate::neural::{Net, Neural};
+use crate::nets;
 
 pub const ID: &str = "magnate";
 
-const WEIGHTS: &[u8] = include_bytes!("../weights/magnate.bin");
+/// The net in [`nets`].
+pub const NET: &str = "magnate";
 
-/// The built-in net, parsed on first use and shared by every Magnate.
+/// The net, shared by every Magnate.
 pub fn net() -> Arc<Net> {
-    static NET: OnceLock<Arc<Net>> = OnceLock::new();
-    NET.get_or_init(|| Arc::new(Net::from_bytes(WEIGHTS).expect("the built-in weights are valid")))
-        .clone()
+    nets::get(NET)
 }
 
 /// A Magnate. The seed makes no difference: it never samples.

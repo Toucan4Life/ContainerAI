@@ -492,3 +492,31 @@ fn each_heuristic_does_what_it_is_for_with_the_same_chances() {
     assert!(showcase[1] > producer[1] && showcase[1] > shipper[1], "restocking: {made:?}");
     assert!(shipper[2] > producer[2] && shipper[2] > showcase[2], "delivering: {made:?}");
 }
+
+#[test]
+fn a_net_is_built_only_once_it_has_been_provided() {
+    let bytes = include_bytes!("../weights/magnate.bin");
+    assert!(crate::nets::provide("bad", &bytes[..8]).is_err());
+    assert!(!crate::nets::available("bad"));
+    crate::nets::provide("under_another_name", bytes).unwrap();
+    assert!(crate::nets::available("under_another_name"));
+}
+
+#[cfg(feature = "embedded-nets")]
+#[test]
+fn every_net_an_opponent_names_is_built_in() {
+    for o in OPPONENTS.iter().filter_map(|o| o.net.map(|net| (o, net))) {
+        assert!(crate::nets::available(o.1), "{} has no built-in net {}", o.0.id, o.1);
+        assert_eq!(crate::missing_net(o.0.id), None);
+    }
+}
+
+#[test]
+fn only_the_opponents_that_play_a_net_name_one() {
+    let netted: Vec<_> = OPPONENTS.iter().filter(|o| o.net.is_some()).map(|o| o.id).collect();
+    assert_eq!(netted.len(), 9);
+    for id in ["random", "simple", "merchant", "solitaire", "producer", "showcase", "shipper"] {
+        assert_eq!(crate::missing_net(id), None, "{id} needs no net");
+    }
+    assert_eq!(crate::missing_net("no such bot"), None);
+}

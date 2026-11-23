@@ -6,22 +6,14 @@
 //! turn it takes it. It plays its best action with the repetition guard of [`Neural`]: without it about
 //! a quarter of its games froze in the trainer's final eval.
 
-use std::sync::{Arc, OnceLock};
-
-use crate::neural::{Net, Neural};
+use crate::neural::Neural;
+use crate::nets;
 
 pub const ID: &str = "classic";
 
-fn net() -> Arc<Net> {
-    static NET: OnceLock<Arc<Net>> = OnceLock::new();
-    NET.get_or_init(|| {
-        Arc::new(
-            Net::from_bytes(include_bytes!("../weights/classic.bin")).expect("the built-in weights are valid"),
-        )
-    })
-    .clone()
-}
+/// The net in [`nets`].
+pub const NET: &str = "classic";
 
 pub fn new(seed: u64) -> Neural {
-    Neural::new(net(), seed, 0.0).without_bank().without_same_turn_repay()
+    Neural::new(nets::get(NET), seed, 0.0).without_bank().without_same_turn_repay()
 }

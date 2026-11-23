@@ -4,25 +4,17 @@
 //! 35% of the training seats were cheap-seller archetypes. It keeps Dealer's two rules: no same-turn loan
 //! repay, and a first bid of at least $3.
 
-use std::sync::{Arc, OnceLock};
-
-use crate::neural::{Net, Neural};
+use crate::neural::Neural;
+use crate::nets;
 
 pub const ID: &str = "haggler";
+
+/// The net in [`nets`].
+pub const NET: &str = "haggler";
 
 /// The least Haggler bids in the first round of a delivery auction.
 const MIN_BID: u32 = 3;
 
-fn net() -> Arc<Net> {
-    static NET: OnceLock<Arc<Net>> = OnceLock::new();
-    NET.get_or_init(|| {
-        Arc::new(
-            Net::from_bytes(include_bytes!("../weights/haggler.bin")).expect("the built-in weights are valid"),
-        )
-    })
-    .clone()
-}
-
 pub fn new(seed: u64) -> Neural {
-    Neural::new(net(), seed, 0.0).without_same_turn_repay().with_min_bid(MIN_BID)
+    Neural::new(nets::get(NET), seed, 0.0).without_same_turn_repay().with_min_bid(MIN_BID)
 }

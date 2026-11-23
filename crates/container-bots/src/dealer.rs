@@ -6,25 +6,17 @@
 //! pricing containers where a buyer cannot lose. It keeps Broker's two rules: it never repays a loan in the
 //! turn it took it, and it opens every delivery auction with a bid of at least $3 (all its cash, if less).
 
-use std::sync::{Arc, OnceLock};
-
-use crate::neural::{Net, Neural};
+use crate::neural::Neural;
+use crate::nets;
 
 pub const ID: &str = "dealer";
+
+/// The net in [`nets`].
+pub const NET: &str = "dealer";
 
 /// The least Dealer bids in the first round of a delivery auction.
 const MIN_BID: u32 = 3;
 
-fn net() -> Arc<Net> {
-    static NET: OnceLock<Arc<Net>> = OnceLock::new();
-    NET.get_or_init(|| {
-        Arc::new(
-            Net::from_bytes(include_bytes!("../weights/dealer.bin")).expect("the built-in weights are valid"),
-        )
-    })
-    .clone()
-}
-
 pub fn new(seed: u64) -> Neural {
-    Neural::new(net(), seed, 0.0).without_same_turn_repay().with_min_bid(MIN_BID)
+    Neural::new(nets::get(NET), seed, 0.0).without_same_turn_repay().with_min_bid(MIN_BID)
 }

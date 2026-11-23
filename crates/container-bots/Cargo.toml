@@ -8,5 +8,11 @@ publish.workspace = true
 [lib]
 name = "container_bots"
 
+[features]
+default = ["embedded-nets"]
+# Builds every net's weights into the crate. The browser build turns it off and hands the engine
+# the one net it needs at run time (see `nets`).
+embedded-nets = []
+
 [dependencies]
 container-engine = { path = "../container-engine" }
