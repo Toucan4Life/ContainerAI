@@ -42,6 +42,12 @@ npm install
 npm run dev     # builds the WASM first (npm run wasm), then serves on :5173
 ```
 
+### Publishing to GitHub Pages
+
+[`.github/workflows/pages.yml`](.github/workflows/pages.yml) builds the UI, WASM included, and publishes `frontend/dist` to GitHub Pages. It runs on every push to `main` that touches `frontend/`, `crates/` or the Cargo manifests, and by hand from the Actions tab (**Run workflow**). The one-time setup is **Settings → Pages → Build and deployment → Source: GitHub Actions**. The site is then at `https://toucan4life.github.io/ContainerAI/`.
+
+`vite.config.ts` sets `base: "./"`, so the build works from any path. To check the production build locally, run `npm run build && npm run preview` in `frontend/`.
+
 ## Engine
 
 The rules engine is the library crate `crates/container-engine` (10th Anniversary rules, 3–5 players).
