@@ -541,7 +541,7 @@ games of 3-5 seats with Magnate took 0.2-0.6 s (340-1,200 steps). The weights ar
 tests need nothing) compiles all nine weight files in. `container-web` turns it off for the WASM build, so
 the WASM is about 0.34 MB (it was 13.9 MB). The nets the menu offers are copied by `build-wasm.sh` to
 `src/wasm/nets/` and fetched on demand: `GameClient.create` calls `ensureNets`, which downloads the net
-a bot needs (the setup screen starts the download when the opponent is picked) and hands it to the
+a bot needs and hands it to the
 WASM's `load_net(name, bytes)`. Until then, `create` refuses that bot with "needs the net ...". Banker's
 `psro08.bin` is a 1.5 MB file in `dist/assets`, fetched only when someone picks Banker.
 

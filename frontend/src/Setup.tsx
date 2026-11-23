@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ArrowRight, Bot, CircleHelp, Plus, Ship, Sparkles, X } from "lucide-react";
-import { GameConfig, OpponentInfo, ensureNets, getOpponents } from "./engine";
+import { GameConfig, OpponentInfo, getOpponents } from "./engine";
 import { seatColor } from "./ui";
 
 const BOT_NAMES = ["Mara", "Otto", "Ines", "Kofi"];
@@ -58,9 +58,6 @@ export default function Setup({ onStart, onHelp, error }: Props) {
   };
 
   const setKind = (index: number, kind: string) => {
-    // Fetch the opponent's net now, so that starting the game does not wait for it. A failure is
-    // reported when the game starts.
-    ensureNets([kind]).catch(() => {});
     setKinds((current) => current.map((k, i) => (i === index ? kind : k)));
   };
 
